@@ -25,7 +25,7 @@ inputs:
   qodercli_version:
     description: 'Specific version of qodercli to install. The default version is tested and optimized for this action. Changing it is not recommended and may lead to unexpected behavior.'
     required: false
-    default: '0.1.10'
+    default: '0.1.18'
 
   enable_qoder_github_mcp:
     description: 'Enable the qoder-github MCP Server for enhanced GitHub operations. This is required for built-in resources and advanced tool capabilities.'

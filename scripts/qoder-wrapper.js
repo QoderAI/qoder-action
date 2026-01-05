@@ -138,7 +138,7 @@ rlOut.on('line', (line) => {
     }
     
     // Stream Content
-    if (data.type === 'assistant' && data.subtype === 'stream') {
+    if (data.type === 'assistant' && data.subtype === 'message') {
       if (data.message && Array.isArray(data.message.content)) {
         data.message.content.forEach(part => {
           // Text
