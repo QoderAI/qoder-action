@@ -19,12 +19,12 @@ assistant = RESOURCE_CONTENT.fetch(File.join(ROOT, ".qoder", "commands", "assist
   mcp__github__add_issue_comment
   mcp__github__add_reply_to_pull_request_comment
   mcp__github__create_branch
-  mcp__github__create_or_update_file
   mcp__github__push_files
   mcp__github__create_pull_request
 ].each do |tool|
   fail_test("assistant command does not reference #{tool}") unless assistant.include?(tool)
 end
+fail_test("assistant command mixes single-file and batch commit tools") if assistant.include?("mcp__github__create_or_update_file")
 
 review = RESOURCE_CONTENT.fetch(File.join(ROOT, ".qoder", "commands", "review-pr.md"))
 %w[

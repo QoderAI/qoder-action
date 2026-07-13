@@ -112,9 +112,8 @@ Classify the request to determine the engagement strategy:
      
      * **Step-by-Step**:
        1. **Branch**: `mcp__github__create_branch` (Select Base based on Protocol A/B).
-       2. **Edit**: `mcp__github__create_or_update_file`.
-       3. **Push**: `mcp__github__push_files`.
-       4. **PR**: `mcp__github__create_pull_request` with `draft: true`.
+       2. **Commit Changes**: Call `mcp__github__push_files` once with all modified files so the task produces one remote commit.
+       3. **PR**: `mcp__github__create_pull_request` with `draft: true`.
 
    - Do not publish progress updates. Preserve all user-visible detail for the final response.
 
