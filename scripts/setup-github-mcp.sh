@@ -3,7 +3,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./github-mcp-common.sh
+# shellcheck disable=SC1091 # Resolved relative to this script at runtime.
 source "${SCRIPT_DIR}/github-mcp-common.sh"
 
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"

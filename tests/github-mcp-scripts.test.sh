@@ -45,6 +45,45 @@ EOF
   chmod +x "${bin_dir}/docker"
 }
 
+create_mcp_fixture() {
+  local destination="$1"
+  local fixture_dir
+
+  fixture_dir="$(mktemp -d)"
+  create_fake_docker "${fixture_dir}/bin"
+  mkdir -p "${fixture_dir}/home" "${fixture_dir}/runner-temp"
+  printf -v "${destination}" '%s' "${fixture_dir}"
+}
+
+run_setup_script() {
+  local test_dir="$1"
+  local script_path="$2"
+  shift 2
+
+  env \
+    PATH="${test_dir}/bin:${PATH}" \
+    HOME="${test_dir}/home" \
+    RUNNER_TEMP="${test_dir}/runner-temp" \
+    GITHUB_OUTPUT="${test_dir}/github-output" \
+    FAKE_DOCKER_LOG="${test_dir}/docker.log" \
+    "$@" \
+    bash "${script_path}"
+}
+
+run_official_setup() {
+  local test_dir="$1"
+  shift
+
+  run_setup_script "${test_dir}" "${ROOT_DIR}/scripts/setup-github-mcp.sh" "$@"
+}
+
+run_legacy_setup() {
+  local test_dir="$1"
+  shift
+
+  run_setup_script "${test_dir}" "${ROOT_DIR}/scripts/setup-qoder-github-mcp.sh" "$@"
+}
+
 test_mcp_defaults_to_enabled() {
   local test_dir
   local output_file
@@ -114,9 +153,7 @@ test_setup_replaces_legacy_with_official_server() {
   local actual
   local expected
 
-  test_dir="$(mktemp -d)"
-  create_fake_docker "${test_dir}/bin"
-  mkdir -p "${test_dir}/home" "${test_dir}/runner-temp"
+  create_mcp_fixture test_dir
 
   cat > "${test_dir}/home/.qoder.json" <<'JSON'
 {
@@ -128,13 +165,8 @@ test_setup_replaces_legacy_with_official_server() {
 }
 JSON
 
-  PATH="${test_dir}/bin:${PATH}" \
-    HOME="${test_dir}/home" \
-    RUNNER_TEMP="${test_dir}/runner-temp" \
-    GITHUB_OUTPUT="${test_dir}/github-output" \
-    FAKE_DOCKER_LOG="${test_dir}/docker.log" \
-    GITHUB_PERSONAL_ACCESS_TOKEN="must-not-be-written" \
-    bash "${ROOT_DIR}/scripts/setup-github-mcp.sh"
+  run_official_setup "${test_dir}" \
+    GITHUB_PERSONAL_ACCESS_TOKEN="must-not-be-written"
 
   actual="$(jq -S . "${test_dir}/home/.qoder.json")"
   expected="$(jq -S . <<'JSON'
@@ -172,9 +204,7 @@ test_cleanup_restores_user_github_server_only() {
   local actual
   local expected
 
-  test_dir="$(mktemp -d)"
-  create_fake_docker "${test_dir}/bin"
-  mkdir -p "${test_dir}/home" "${test_dir}/runner-temp"
+  create_mcp_fixture test_dir
 
   cat > "${test_dir}/home/.qoder.json" <<'JSON'
 {
@@ -186,12 +216,7 @@ test_cleanup_restores_user_github_server_only() {
 }
 JSON
 
-  PATH="${test_dir}/bin:${PATH}" \
-    HOME="${test_dir}/home" \
-    RUNNER_TEMP="${test_dir}/runner-temp" \
-    GITHUB_OUTPUT="${test_dir}/github-output" \
-    FAKE_DOCKER_LOG="${test_dir}/docker.log" \
-    bash "${ROOT_DIR}/scripts/setup-github-mcp.sh"
+  run_official_setup "${test_dir}"
 
   backup_file="$(sed -n 's/^backup_file=//p' "${test_dir}/github-output")"
 
@@ -225,9 +250,7 @@ test_docker_pull_failure_is_atomic() {
   local before
   local after
 
-  test_dir="$(mktemp -d)"
-  create_fake_docker "${test_dir}/bin"
-  mkdir -p "${test_dir}/home" "${test_dir}/runner-temp"
+  create_mcp_fixture test_dir
 
   cat > "${test_dir}/home/.qoder.json" <<'JSON'
 {
@@ -239,13 +262,8 @@ test_docker_pull_failure_is_atomic() {
 JSON
   before="$(jq -S . "${test_dir}/home/.qoder.json")"
 
-  if PATH="${test_dir}/bin:${PATH}" \
-    HOME="${test_dir}/home" \
-    RUNNER_TEMP="${test_dir}/runner-temp" \
-    GITHUB_OUTPUT="${test_dir}/github-output" \
-    FAKE_DOCKER_LOG="${test_dir}/docker.log" \
-    FAKE_DOCKER_FAIL_COMMAND="pull" \
-    bash "${ROOT_DIR}/scripts/setup-github-mcp.sh" >/dev/null 2>&1; then
+  if run_official_setup "${test_dir}" \
+    FAKE_DOCKER_FAIL_COMMAND="pull" >/dev/null 2>&1; then
     fail "Docker pull failure should fail setup"
   fi
 
@@ -260,17 +278,10 @@ test_legacy_script_delegates_to_official_setup() {
   local log_file
   local command
 
-  test_dir="$(mktemp -d)"
+  create_mcp_fixture test_dir
   log_file="${test_dir}/log"
-  create_fake_docker "${test_dir}/bin"
-  mkdir -p "${test_dir}/home" "${test_dir}/runner-temp"
 
-  PATH="${test_dir}/bin:${PATH}" \
-    HOME="${test_dir}/home" \
-    RUNNER_TEMP="${test_dir}/runner-temp" \
-    GITHUB_OUTPUT="${test_dir}/github-output" \
-    FAKE_DOCKER_LOG="${test_dir}/docker.log" \
-    bash "${ROOT_DIR}/scripts/setup-qoder-github-mcp.sh" > "${log_file}"
+  run_legacy_setup "${test_dir}" > "${log_file}"
 
   if ! grep -q "::warning::.*deprecated" "${log_file}"; then
     fail "legacy setup path should emit a deprecation warning"
@@ -282,6 +293,46 @@ test_legacy_script_delegates_to_official_setup() {
   rm -rf "${test_dir}"
 }
 
+test_legacy_config_is_removed_without_official_setup() {
+  local test_dir
+  local actual
+  local expected
+
+  test_dir="$(mktemp -d)"
+  mkdir -p "${test_dir}/home"
+
+  cat > "${test_dir}/home/.qoder.json" <<'JSON'
+{
+  "mcpServers": {
+    "github": { "command": "user-github-server" },
+    "qoder_github": {
+      "command": "legacy-server",
+      "env": { "GITHUB_TOKEN": "legacy-token-on-disk" }
+    },
+    "other": { "command": "other-server" }
+  }
+}
+JSON
+
+  HOME="${test_dir}/home" \
+    bash "${ROOT_DIR}/scripts/remove-legacy-github-mcp.sh"
+
+  actual="$(jq -S . "${test_dir}/home/.qoder.json")"
+  expected="$(jq -S . <<'JSON'
+{
+  "mcpServers": {
+    "github": { "command": "user-github-server" },
+    "other": { "command": "other-server" }
+  }
+}
+JSON
+)"
+
+  assert_equals "${expected}" "${actual}" "disabled-path legacy migration"
+
+  rm -rf "${test_dir}"
+}
+
 run_test "GitHub MCP defaults to enabled" test_mcp_defaults_to_enabled
 run_test "canonical input wins conflicts" test_new_input_overrides_legacy_input
 run_test "invalid enable input fails" test_invalid_input_fails
@@ -289,5 +340,6 @@ run_test "setup replaces legacy server with official server" test_setup_replaces
 run_test "cleanup restores only the user's GitHub server" test_cleanup_restores_user_github_server_only
 run_test "Docker pull failure leaves configuration unchanged" test_docker_pull_failure_is_atomic
 run_test "legacy setup script delegates to official setup" test_legacy_script_delegates_to_official_setup
+run_test "legacy config is removed even without official setup" test_legacy_config_is_removed_without_official_setup
 
 echo "1..${TESTS_RUN}"

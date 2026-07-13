@@ -17,11 +17,19 @@ assert_equal("", inputs.fetch("enable_github_mcp").fetch("default"), "canonical 
 assert_equal("", inputs.fetch("enable_qoder_github_mcp").fetch("default"), "legacy input default")
 
 steps = ACTION.fetch("runs").fetch("steps")
+migrate_legacy = steps.find { |step| step["id"] == "remove_legacy_github_mcp" }
 resolve = steps.find { |step| step["id"] == "resolve_github_mcp" }
 setup = steps.find { |step| step["id"] == "setup_github_mcp" }
 run_cli = steps.find { |step| step["id"] == "run_cli" }
 cleanup = steps.find { |step| step["id"] == "cleanup_github_mcp" }
 
+assert_equal(false, migrate_legacy.nil?, "legacy migration step")
+assert_equal(false, migrate_legacy&.key?("if"), "unconditional legacy migration")
+assert_equal(
+  true,
+  steps.index(migrate_legacy) < steps.index(setup),
+  "legacy migration precedes conditional setup"
+)
 assert_equal(
   "${{ inputs.enable_github_mcp }}",
   resolve&.dig("env", "INPUT_ENABLE_GITHUB_MCP"),

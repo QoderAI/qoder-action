@@ -49,6 +49,12 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    - name: Remove legacy qoder-github MCP configuration
+      id: remove_legacy_github_mcp
+      shell: bash
+      run: |
+        bash "${GITHUB_ACTION_PATH}/scripts/remove-legacy-github-mcp.sh"
+
     - name: Install qodercli
       shell: bash
       env:
