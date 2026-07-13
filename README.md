@@ -85,7 +85,7 @@ This action uses OpenID Connect (OIDC) to securely authenticate with Qoder servi
 
 The GitHub MCP integration runs the official [`github/github-mcp-server`](https://github.com/github/github-mcp-server) container under the server name `github`. Its tools therefore use the `mcp__github__*` namespace. The default image is release `v1.5.0`, pinned to its immutable multi-platform manifest digest rather than a floating tag.
 
-The integration is enabled by default and requires a Linux runner with a working Docker daemon and the standard `flock` utility. If Docker, `flock`, or the pinned image is unavailable while MCP is enabled, the action fails immediately. Set `enable_github_mcp: false` when the workflow does not need GitHub MCP tools.
+The action requires a Linux runner with the standard `flock` utility so executions sharing a home can coordinate Qoder configuration access. The GitHub MCP integration is enabled by default and additionally requires a working Docker daemon. If Docker or the pinned image is unavailable while MCP is enabled, the action fails immediately. Set `enable_github_mcp: false` when the workflow does not need GitHub MCP tools.
 
 By default, the official server exposes its writable `default` toolsets: `context`, `repos`, `issues`, `pull_requests`, and `users`. GitHub App token permissions remain the authorization boundary. Advanced workflows can set these environment variables on the action step:
 

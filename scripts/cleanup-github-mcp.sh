@@ -19,6 +19,7 @@ if ! jq -e '
   type == "object"
   and (.had_config | type == "boolean")
   and (.had_mcp_servers | type == "boolean")
+  and (.mcp_servers_was_null | type == "boolean")
   and (.had_github | type == "boolean")
 ' "${GITHUB_MCP_BACKUP_FILE}" >/dev/null; then
   echo "::error::GitHub MCP configuration backup is invalid." >&2
@@ -51,7 +52,11 @@ jq --slurpfile backup "${GITHUB_MCP_BACKUP_FILE}" '
     else
       del(.mcpServers.github)
     end
-  | if ($saved.had_mcp_servers | not)
+  | if $saved.mcp_servers_was_null
+      and (.mcpServers != null)
+      and ((.mcpServers | length) == 0)
+    then .mcpServers = null
+    elif ($saved.had_mcp_servers | not)
       and (.mcpServers != null)
       and ((.mcpServers | length) == 0)
     then del(.mcpServers)

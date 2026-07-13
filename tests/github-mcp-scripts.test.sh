@@ -72,7 +72,10 @@ create_fake_node() {
 #!/usr/bin/env bash
 set -euo pipefail
 
-jq -e '.mcpServers.github.command == "bash"' "${HOME}/.qoder.json" >/dev/null
+actual_github_command="$(jq -r '.mcpServers.github.command // "missing"' "${HOME}/.qoder.json")"
+if [[ "${actual_github_command}" != "${FAKE_EXPECTED_GITHUB_COMMAND}" ]]; then
+  exit 46
+fi
 if [[ "${HOME}" != "${FAKE_EXPECTED_HOME}" || ! -x "${HOME}/bin/user-mcp-server" ]]; then
   exit 44
 fi
@@ -384,6 +387,13 @@ run_locked_lifecycle() {
   local started_file="$3"
   local release_file="$4"
   local node_exit="${5:-0}"
+  local enabled="${6:-true}"
+  local expected_github_command="${7:-bash}"
+  local personal_access_token=""
+
+  if [[ "${enabled}" == "true" ]]; then
+    personal_access_token="runtime-token"
+  fi
 
   env \
     PATH="${test_dir}/bin:${PATH}" \
@@ -392,11 +402,13 @@ run_locked_lifecycle() {
     GITHUB_WORKSPACE="${ROOT_DIR}" \
     GITHUB_ACTION_PATH="${ROOT_DIR}" \
     GITHUB_OUTPUT="${test_dir}/run-${run_id}-output" \
-    ENABLE_GITHUB_MCP="true" \
-    GITHUB_PERSONAL_ACCESS_TOKEN="runtime-token" \
+    ENABLE_GITHUB_MCP="${enabled}" \
+    GITHUB_TOKEN="runtime-token" \
+    GITHUB_PERSONAL_ACCESS_TOKEN="${personal_access_token}" \
     FAKE_DOCKER_LOG="${test_dir}/docker.log" \
     FAKE_DOCKER_REQUIRE_CONFIG="true" \
     FAKE_EXPECTED_HOME="${test_dir}/home" \
+    FAKE_EXPECTED_GITHUB_COMMAND="${expected_github_command}" \
     FAKE_NODE_STARTED="${started_file}" \
     FAKE_NODE_RELEASE="${release_file}" \
     FAKE_NODE_EXIT="${node_exit}" \
@@ -480,6 +492,68 @@ JSON
   rm -rf "${test_dir}"
 }
 
+test_disabled_run_waits_for_enabled_restore() {
+  local test_dir
+  local docker_calls
+  local pid_enabled
+  local pid_disabled
+  local release_disabled
+  local release_enabled
+  local started_disabled
+  local started_enabled
+
+  create_mcp_fixture test_dir
+  create_fake_node "${test_dir}/bin"
+  mkdir -p "${test_dir}/home/.docker" "${test_dir}/home/bin"
+  printf '{}\n' > "${test_dir}/home/.docker/config.json"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${test_dir}/home/bin/user-mcp-server"
+  chmod +x "${test_dir}/home/bin/user-mcp-server"
+
+  cat > "${test_dir}/home/.qoder.json" <<'JSON'
+{
+  "mcpServers": {
+    "github": { "command": "user-github-server" },
+    "other": { "command": "other-server" }
+  }
+}
+JSON
+
+  started_enabled="${test_dir}/started-enabled"
+  started_disabled="${test_dir}/started-disabled"
+  release_enabled="${test_dir}/release-enabled"
+  release_disabled="${test_dir}/release-disabled"
+  touch "${release_disabled}"
+
+  run_locked_lifecycle \
+    "${test_dir}" "enabled" "${started_enabled}" "${release_enabled}" \
+    > "${test_dir}/run-enabled.log" 2>&1 &
+  pid_enabled=$!
+  if ! wait_for_file "${started_enabled}"; then
+    wait "${pid_enabled}" || true
+    fail "enabled lifecycle did not start"
+  fi
+
+  run_locked_lifecycle \
+    "${test_dir}" "disabled" "${started_disabled}" "${release_disabled}" \
+    "0" "false" "user-github-server" \
+    > "${test_dir}/run-disabled.log" 2>&1 &
+  pid_disabled=$!
+  sleep 0.5
+  if [[ -e "${started_disabled}" ]]; then
+    kill "${pid_enabled}" "${pid_disabled}" 2>/dev/null || true
+    fail "disabled lifecycle read the temporary GitHub MCP configuration"
+  fi
+
+  touch "${release_enabled}"
+  wait "${pid_enabled}"
+  wait "${pid_disabled}"
+
+  docker_calls="$(wc -l < "${test_dir}/docker.log" | tr -d ' ')"
+  assert_equals "2" "${docker_calls}" "disabled lifecycle Docker calls"
+
+  rm -rf "${test_dir}"
+}
+
 test_failed_run_restores_config_and_releases_lock() {
   local test_dir
   local original_before
@@ -521,6 +595,39 @@ JSON
   rm -rf "${test_dir}"
 }
 
+test_null_mcp_servers_shape_is_restored() {
+  local test_dir
+  local original_before
+  local original_after
+  local release_file
+
+  create_mcp_fixture test_dir
+  create_fake_node "${test_dir}/bin"
+  mkdir -p "${test_dir}/home/.docker" "${test_dir}/home/bin"
+  printf '{}\n' > "${test_dir}/home/.docker/config.json"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${test_dir}/home/bin/user-mcp-server"
+  chmod +x "${test_dir}/home/bin/user-mcp-server"
+
+  cat > "${test_dir}/home/.qoder.json" <<'JSON'
+{
+  "theme": "dark",
+  "mcpServers": null
+}
+JSON
+  original_before="$(jq -S . "${test_dir}/home/.qoder.json")"
+  release_file="${test_dir}/release"
+  touch "${release_file}"
+
+  run_locked_lifecycle \
+    "${test_dir}" "null-shape" "${test_dir}/started-null" "${release_file}" \
+    > "${test_dir}/run-null.log" 2>&1
+
+  original_after="$(jq -S . "${test_dir}/home/.qoder.json")"
+  assert_equals "${original_before}" "${original_after}" "null mcpServers restoration"
+
+  rm -rf "${test_dir}"
+}
+
 run_test "GitHub MCP defaults to enabled" test_mcp_defaults_to_enabled
 run_test "canonical input wins conflicts" test_new_input_overrides_legacy_input
 run_test "invalid enable input fails" test_invalid_input_fails
@@ -530,6 +637,8 @@ run_test "legacy setup script delegates to official setup" test_legacy_script_de
 run_test "legacy token crosses steps without entering Qoder config" test_legacy_token_is_bridged_at_runtime
 run_test "legacy config is removed even without official setup" test_legacy_config_is_removed_without_official_setup
 run_test "concurrent runs serialize the shared Qoder configuration" test_concurrent_runs_serialize_shared_home
+run_test "disabled runs wait for enabled configuration restore" test_disabled_run_waits_for_enabled_restore
 run_test "failed runs restore configuration and release the lock" test_failed_run_restores_config_and_releases_lock
+run_test "null mcpServers shape is restored" test_null_mcp_servers_shape_is_restored
 
 echo "1..${TESTS_RUN}"

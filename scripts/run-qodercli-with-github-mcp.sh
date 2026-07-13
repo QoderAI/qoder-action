@@ -9,7 +9,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 case "${ENABLE_GITHUB_MCP}" in
   false)
-    exec bash "${SCRIPT_DIR}/run-qodercli.sh"
     ;;
   true)
     ;;
@@ -19,16 +18,18 @@ case "${ENABLE_GITHUB_MCP}" in
     ;;
 esac
 
-: "${RUNNER_TEMP:?RUNNER_TEMP is required when GitHub MCP is enabled}"
-
-if ! command -v jq >/dev/null 2>&1; then
-  echo "::error::jq is required to preserve the GitHub MCP configuration." >&2
+if ! command -v flock >/dev/null 2>&1; then
+  echo "::error::flock is required to serialize qodercli on a shared runner HOME." >&2
   exit 1
 fi
 
-if ! command -v flock >/dev/null 2>&1; then
-  echo "::error::flock is required to serialize GitHub MCP on a shared runner HOME." >&2
-  exit 1
+if [[ "${ENABLE_GITHUB_MCP}" == "true" ]]; then
+  : "${RUNNER_TEMP:?RUNNER_TEMP is required when GitHub MCP is enabled}"
+
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "::error::jq is required to preserve the GitHub MCP configuration." >&2
+    exit 1
+  fi
 fi
 
 LOCK_FILE="${HOME}/.qoder-action-github-mcp.lock"
@@ -77,6 +78,11 @@ echo "Waiting for exclusive access to ${HOME}/.qoder.json..."
 flock 9
 echo "✓ Exclusive Qoder configuration lock acquired"
 
+if [[ "${ENABLE_GITHUB_MCP}" == "false" ]]; then
+  bash "${SCRIPT_DIR}/run-qodercli.sh" 9>&-
+  exit 0
+fi
+
 CONFIG_FILE="${HOME}/.qoder.json"
 BACKUP_FILE="$(mktemp "${RUNNER_TEMP%/}/qoder-github-mcp-backup.XXXXXX")"
 chmod 600 "${BACKUP_FILE}"
@@ -91,6 +97,7 @@ if [[ -f "${CONFIG_FILE}" ]]; then
   jq '{
     "had_config": true,
     "had_mcp_servers": has("mcpServers"),
+    "mcp_servers_was_null": (has("mcpServers") and (.mcpServers == null)),
     "had_github": ((.mcpServers // {}) | has("github")),
     "github": (.mcpServers.github // null)
   }' "${CONFIG_FILE}" > "${BACKUP_FILE}"
@@ -98,6 +105,7 @@ else
   jq -n '{
     "had_config": false,
     "had_mcp_servers": false,
+    "mcp_servers_was_null": false,
     "had_github": false,
     "github": null
   }' > "${BACKUP_FILE}"
