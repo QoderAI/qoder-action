@@ -25,6 +25,7 @@ fi
 
 IMAGE="$(github_mcp_server_image)"
 LAUNCHER="${SCRIPT_DIR}/run-github-mcp-server.sh"
+GITHUB_MCP_ENTRY="$(github_mcp_server_entry "${LAUNCHER}" "${IMAGE}")"
 echo "::group::Pulling official GitHub MCP Server image"
 if ! docker pull "${IMAGE}"; then
   echo "::endgroup::"
@@ -41,13 +42,9 @@ if [[ ! -f "${CONFIG_FILE}" ]]; then
   echo "{}" > "${CONFIG_FILE}"
 fi
 
-jq --arg image "${IMAGE}" --arg launcher "${LAUNCHER}" '
+jq --argjson github_mcp_entry "${GITHUB_MCP_ENTRY}" '
   if .mcpServers == null then .mcpServers = {} else . end
-  | .mcpServers.github = {
-      "command": "bash",
-      "args": [$launcher, $image],
-      "type": "stdio"
-    }
+  | .mcpServers.github = $github_mcp_entry
 ' "${CONFIG_FILE}" > "${TMP_CONFIG}"
 
 mv "${TMP_CONFIG}" "${CONFIG_FILE}"

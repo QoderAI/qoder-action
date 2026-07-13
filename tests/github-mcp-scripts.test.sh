@@ -82,7 +82,7 @@ fi
 if [[ "${HOME}" != "${FAKE_EXPECTED_HOME}" || ! -x "${HOME}/bin/user-mcp-server" ]]; then
   exit 44
 fi
-if [[ -e /dev/fd/9 ]]; then
+if [[ ! -e /dev/fd/9 ]]; then
   exit 45
 fi
 lifecycle_pid="$(ps -o ppid= -p "${PPID}" | tr -d '[:space:]')"
@@ -385,6 +385,41 @@ JSON
   rm -rf "${test_dir}"
 }
 
+test_qoder_wrapper_forwards_lock_lease() {
+  local test_dir
+  local output_file
+  local error_file
+
+  test_dir="$(mktemp -d)"
+  mkdir -p "${test_dir}/bin"
+  cat > "${test_dir}/bin/qodercli" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${QODER_ACTION_LOCK_FD:-}" != "9" || ! -e /dev/fd/9 ]]; then
+  exit 55
+fi
+EOF
+  chmod +x "${test_dir}/bin/qodercli"
+
+  (
+    exec 9>> "${test_dir}/lock"
+    PATH="${test_dir}/bin:${PATH}" \
+      QODER_ACTION_LOCK_FD="9" \
+      GITHUB_WORKSPACE="${ROOT_DIR}" \
+      GITHUB_OUTPUT="${test_dir}/github-output" \
+      INPUT_PROMPT="" \
+      INPUT_FLAGS="" \
+      node "${ROOT_DIR}/scripts/qoder-wrapper.js" \
+      > "${test_dir}/wrapper.log" 2>&1
+  )
+
+  output_file="$(sed -n 's/^output_file=//p' "${test_dir}/github-output")"
+  error_file="${output_file/qoder-output-/qoder-error-}"
+  rm -f "${output_file}" "${error_file}"
+  rm -rf "${test_dir}"
+}
+
 run_locked_lifecycle() {
   local test_dir="$1"
   local run_id="$2"
@@ -410,6 +445,7 @@ run_locked_lifecycle() {
     GITHUB_TOKEN="runtime-token" \
     GITHUB_PERSONAL_ACCESS_TOKEN="${personal_access_token}" \
     FAKE_DOCKER_LOG="${test_dir}/docker.log" \
+    FAKE_DOCKER_FAIL_COMMAND="${FAKE_DOCKER_FAIL_COMMAND:-}" \
     FAKE_DOCKER_REQUIRE_CONFIG="true" \
     FAKE_EXPECTED_HOME="${test_dir}/home" \
     FAKE_EXPECTED_GITHUB_COMMAND="${expected_github_command}" \
@@ -611,7 +647,9 @@ test_next_run_recovers_after_sigkill() {
   local original_after
   local release_killed
   local release_retry
+  local retry_pid
   local started_killed
+  local started_retry
 
   create_mcp_fixture test_dir
   create_fake_node "${test_dir}/bin"
@@ -632,6 +670,7 @@ JSON
   started_killed="${test_dir}/started-killed"
   release_killed="${test_dir}/release-killed"
   release_retry="${test_dir}/release-retry"
+  started_retry="${test_dir}/started-recover"
   touch "${release_retry}"
 
   run_locked_lifecycle \
@@ -651,17 +690,133 @@ JSON
   if wait "${lifecycle_job_pid}" 2>/dev/null; then
     fail "SIGKILL should terminate the lifecycle"
   fi
-  touch "${release_killed}"
 
   run_locked_lifecycle \
-    "${test_dir}" "recover" "${test_dir}/started-recover" "${release_retry}" \
+    "${test_dir}" "recover" "${started_retry}" "${release_retry}" \
     "0" "false" "user-github-server" \
-    > "${test_dir}/run-recover.log" 2>&1
+    > "${test_dir}/run-recover.log" 2>&1 &
+  retry_pid=$!
+  sleep 0.5
+  if [[ -e "${started_retry}" ]]; then
+    touch "${release_killed}"
+    wait "${retry_pid}" || true
+    fail "recovery started while the killed lifecycle's qodercli was still running"
+  fi
+
+  touch "${release_killed}"
+  wait "${retry_pid}"
+  if [[ ! -e "${started_retry}" ]]; then
+    fail "recovery did not start after the orphaned qodercli released the lock"
+  fi
 
   original_after="$(jq -S . "${test_dir}/home/.qoder.json")"
   assert_equals "${original_before}" "${original_after}" "shared HOME after SIGKILL recovery"
   if [[ -e "${test_dir}/home/.qoder-action-github-mcp-backup.json" ]]; then
     fail "SIGKILL recovery should consume the persistent backup journal"
+  fi
+
+  rm -rf "${test_dir}"
+}
+
+test_recovery_preserves_new_user_github() {
+  local test_dir
+  local actual
+  local expected
+  local killed_pid
+  local lifecycle_job_pid
+  local release_killed
+  local started_killed
+  local tmp_config
+
+  create_mcp_fixture test_dir
+  create_fake_node "${test_dir}/bin"
+  mkdir -p "${test_dir}/home/.docker" "${test_dir}/home/bin"
+  printf '{}\n' > "${test_dir}/home/.docker/config.json"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${test_dir}/home/bin/user-mcp-server"
+  chmod +x "${test_dir}/home/bin/user-mcp-server"
+  printf '{"mcpServers":{"other":{"command":"other-server"}}}\n' \
+    > "${test_dir}/home/.qoder.json"
+
+  started_killed="${test_dir}/started-conflict"
+  release_killed="${test_dir}/release-conflict"
+  run_locked_lifecycle \
+    "${test_dir}" "conflict" "${started_killed}" "${release_killed}" \
+    > "${test_dir}/run-conflict.log" 2>&1 &
+  lifecycle_job_pid=$!
+  if ! wait_for_file "${started_killed}"; then
+    wait "${lifecycle_job_pid}" || true
+    fail "lifecycle selected for recovery conflict did not start"
+  fi
+
+  killed_pid="$(cat "${started_killed}")"
+  kill -KILL "${killed_pid}"
+  wait "${lifecycle_job_pid}" 2>/dev/null || true
+
+  tmp_config="$(mktemp "${test_dir}/home/.qoder.json.user.XXXXXX")"
+  jq '.mcpServers.github = {"command":"new-user-server"}' \
+    "${test_dir}/home/.qoder.json" > "${tmp_config}"
+  mv "${tmp_config}" "${test_dir}/home/.qoder.json"
+  touch "${release_killed}"
+
+  if run_locked_lifecycle \
+    "${test_dir}" "conflict-recovery" "${test_dir}/started-conflict-recovery" "${release_killed}" \
+    "0" "false" "new-user-server" \
+    > "${test_dir}/run-conflict-recovery.log" 2>&1; then
+    fail "recovery should stop when the user GitHub MCP entry changed"
+  fi
+
+  actual="$(jq -S . "${test_dir}/home/.qoder.json")"
+  expected="$(jq -S . <<'JSON'
+{
+  "mcpServers": {
+    "github": { "command": "new-user-server" },
+    "other": { "command": "other-server" }
+  }
+}
+JSON
+)"
+  assert_equals "${expected}" "${actual}" "user GitHub MCP entry after recovery conflict"
+  if [[ ! -f "${test_dir}/home/.qoder-action-github-mcp-backup.json" ]]; then
+    fail "recovery conflict should retain the backup journal"
+  fi
+  if ! grep -q "mcpServers.github changed" "${test_dir}/run-conflict-recovery.log"; then
+    fail "recovery conflict should explain why automatic restoration stopped"
+  fi
+
+  rm -rf "${test_dir}"
+}
+
+test_failed_setup_consumes_prepared_journal() {
+  local test_dir
+  local original_before
+  local original_after
+  local release_file
+
+  create_mcp_fixture test_dir
+  mkdir -p "${test_dir}/home/.docker"
+  printf '{}\n' > "${test_dir}/home/.docker/config.json"
+  cat > "${test_dir}/home/.qoder.json" <<'JSON'
+{
+  "mcpServers": {
+    "github": { "command": "user-github-server" },
+    "other": { "command": "other-server" }
+  }
+}
+JSON
+  original_before="$(jq -S . "${test_dir}/home/.qoder.json")"
+  release_file="${test_dir}/release-failed-setup"
+  touch "${release_file}"
+
+  if FAKE_DOCKER_FAIL_COMMAND="pull" run_locked_lifecycle \
+    "${test_dir}" "failed-setup" "${test_dir}/started-failed-setup" "${release_file}" \
+    > "${test_dir}/run-failed-setup.log" 2>&1; then
+    fail "failed GitHub MCP setup should fail the lifecycle"
+  fi
+
+  original_after="$(jq -S . "${test_dir}/home/.qoder.json")"
+  assert_equals "${original_before}" "${original_after}" "shared HOME after failed setup"
+  if [[ -e "${test_dir}/home/.qoder-action-github-mcp-backup.json" ]]; then
+    fail "failed setup should consume a prepared journal after confirming the original entry"
   fi
 
   rm -rf "${test_dir}"
@@ -773,10 +928,13 @@ run_test "Docker pull failure only leaves permanent legacy migration" test_docke
 run_test "legacy setup script delegates to official setup" test_legacy_script_delegates_to_official_setup
 run_test "legacy token crosses steps without entering Qoder config" test_legacy_token_is_bridged_at_runtime
 run_test "legacy config is removed even without official setup" test_legacy_config_is_removed_without_official_setup
+run_test "qoder wrapper forwards the lock lease" test_qoder_wrapper_forwards_lock_lease
 run_test "concurrent runs serialize the shared Qoder configuration" test_concurrent_runs_serialize_shared_home
 run_test "disabled runs wait for enabled configuration restore" test_disabled_run_waits_for_enabled_restore
 run_test "disabled runs migrate legacy config before qodercli" test_disabled_run_migrates_legacy_before_qodercli
 run_test "next run recovers configuration after SIGKILL" test_next_run_recovers_after_sigkill
+run_test "recovery preserves a new user GitHub MCP entry" test_recovery_preserves_new_user_github
+run_test "failed setup consumes a prepared journal" test_failed_setup_consumes_prepared_journal
 run_test "invalid recovery journal is retained" test_invalid_recovery_journal_is_retained
 run_test "failed runs restore configuration and release the lock" test_failed_run_restores_config_and_releases_lock
 run_test "null mcpServers shape is restored" test_null_mcp_servers_shape_is_restored

@@ -3,6 +3,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091 # Resolved relative to this script at runtime.
+source "${SCRIPT_DIR}/github-mcp-common.sh"
 
 : "${ENABLE_GITHUB_MCP:?ENABLE_GITHUB_MCP is required}"
 : "${HOME:?HOME is required}"
@@ -67,6 +69,12 @@ restore_configuration() {
   exit "${command_status}"
 }
 
+run_qodercli_holding_lock() {
+  # Keep fd 9 open in the qodercli process tree. If this lifecycle shell is
+  # killed, the surviving work retains the lock until it actually finishes.
+  QODER_ACTION_LOCK_FD="9" bash "${SCRIPT_DIR}/run-qodercli.sh"
+}
+
 trap 'restore_configuration $?' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -93,11 +101,16 @@ fi
 bash "${SCRIPT_DIR}/remove-legacy-github-mcp.sh" 9>&-
 
 if [[ "${ENABLE_GITHUB_MCP}" == "false" ]]; then
-  bash "${SCRIPT_DIR}/run-qodercli.sh" 9>&-
+  run_qodercli_holding_lock
   exit 0
 fi
 
 CONFIG_FILE="${HOME}/.qoder.json"
+TEMPORARY_GITHUB_ENTRY="$(
+  github_mcp_server_entry \
+    "${SCRIPT_DIR}/run-github-mcp-server.sh" \
+    "$(github_mcp_server_image)"
+)"
 BACKUP_TEMP_FILE="$(mktemp "${HOME}/.qoder-action-github-mcp-backup.tmp.XXXXXX")"
 chmod 600 "${BACKUP_TEMP_FILE}"
 
@@ -108,20 +121,22 @@ if [[ -f "${CONFIG_FILE}" ]]; then
     exit 1
   fi
 
-  jq '{
+  jq --argjson temporary_github "${TEMPORARY_GITHUB_ENTRY}" '{
     "had_config": true,
     "had_mcp_servers": has("mcpServers"),
     "mcp_servers_was_null": (has("mcpServers") and (.mcpServers == null)),
     "had_github": ((.mcpServers // {}) | has("github")),
-    "github": (.mcpServers.github // null)
+    "github": .mcpServers.github,
+    "temporary_github": $temporary_github
   }' "${CONFIG_FILE}" > "${BACKUP_TEMP_FILE}"
 else
-  jq -n '{
+  jq -n --argjson temporary_github "${TEMPORARY_GITHUB_ENTRY}" '{
     "had_config": false,
     "had_mcp_servers": false,
     "mcp_servers_was_null": false,
     "had_github": false,
-    "github": null
+    "github": null,
+    "temporary_github": $temporary_github
   }' > "${BACKUP_TEMP_FILE}"
 fi
 mv "${BACKUP_TEMP_FILE}" "${BACKUP_FILE}"
@@ -129,4 +144,4 @@ BACKUP_TEMP_FILE=""
 BACKUP_READY="true"
 
 bash "${SCRIPT_DIR}/setup-github-mcp.sh" 9>&-
-bash "${SCRIPT_DIR}/run-qodercli.sh" 9>&-
+run_qodercli_holding_lock

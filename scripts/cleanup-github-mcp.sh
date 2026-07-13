@@ -21,6 +21,7 @@ if ! jq -e '
   and (.had_mcp_servers | type == "boolean")
   and (.mcp_servers_was_null | type == "boolean")
   and (.had_github | type == "boolean")
+  and (.temporary_github | type == "object")
 ' "${GITHUB_MCP_BACKUP_FILE}" >/dev/null; then
   echo "::error::GitHub MCP configuration backup is invalid." >&2
   exit 1
@@ -32,7 +33,9 @@ if [[ ! -f "${CONFIG_FILE}" ]]; then
     echo "::error::Cannot restore GitHub MCP because ${CONFIG_FILE} was removed during the run. Backup retained at ${GITHUB_MCP_BACKUP_FILE}." >&2
     exit 1
   fi
-  echo "{}" > "${CONFIG_FILE}"
+  rm -f "${GITHUB_MCP_BACKUP_FILE}"
+  echo "✓ GitHub MCP configuration already matches the backup journal"
+  exit 0
 fi
 
 if ! jq -e 'type == "object" and ((.mcpServers // {}) | type == "object")' \
@@ -40,6 +43,37 @@ if ! jq -e 'type == "object" and ((.mcpServers // {}) | type == "object")' \
   echo "::error::${CONFIG_FILE} changed to an invalid shape while GitHub MCP was running." >&2
   exit 1
 fi
+
+CURRENT_STATE="$(jq -r --slurpfile backup "${GITHUB_MCP_BACKUP_FILE}" '
+  ($backup[0]) as $saved
+  | def has_github: ((.mcpServers // {}) | has("github"));
+  if has_github and (.mcpServers.github == $saved.temporary_github) then
+    "temporary"
+  elif (($saved.had_github and has_github and (.mcpServers.github == $saved.github))
+    or (($saved.had_github | not) and (has_github | not))) then
+    "original"
+  else
+    "conflict"
+  end
+' "${CONFIG_FILE}")"
+
+case "${CURRENT_STATE}" in
+  original)
+    rm -f "${GITHUB_MCP_BACKUP_FILE}"
+    echo "✓ GitHub MCP configuration already matches the backup journal"
+    exit 0
+    ;;
+  temporary)
+    ;;
+  conflict)
+    echo "::error::Cannot restore GitHub MCP because mcpServers.github changed since this action installed its temporary entry. Current configuration and backup journal were preserved." >&2
+    exit 1
+    ;;
+  *)
+    echo "::error::Cannot classify the current GitHub MCP configuration. Backup retained at ${GITHUB_MCP_BACKUP_FILE}." >&2
+    exit 1
+    ;;
+esac
 
 TMP_CONFIG="$(mktemp "${HOME}/.qoder.json.tmp.XXXXXX")"
 trap 'rm -f "${TMP_CONFIG}"' EXIT

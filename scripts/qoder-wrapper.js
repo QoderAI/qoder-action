@@ -104,8 +104,22 @@ printGroupEnd();
 
 // --- 2. Execution & Stream Processing ---
 
+const qoderStdio = ['inherit', 'pipe', 'pipe'];
+const lockFdInput = process.env.QODER_ACTION_LOCK_FD;
+if (lockFdInput) {
+  const lockFd = Number(lockFdInput);
+  if (!Number.isSafeInteger(lockFd) || lockFd < 3 || lockFd > 1024) {
+    console.error(`Invalid QODER_ACTION_LOCK_FD: ${lockFdInput}`);
+    process.exit(1);
+  }
+  while (qoderStdio.length < lockFd) {
+    qoderStdio.push('ignore');
+  }
+  qoderStdio.push(lockFd);
+}
+
 const child = spawn('qodercli', args, {
-  stdio: ['inherit', 'pipe', 'pipe'], // Capture stdout and stderr
+  stdio: qoderStdio, // Capture output while forwarding the optional lock lease.
   shell: false,
   env: process.env
 });
