@@ -18,17 +18,20 @@ assert_equal("", inputs.fetch("enable_qoder_github_mcp").fetch("default"), "lega
 
 steps = ACTION.fetch("runs").fetch("steps")
 migrate_legacy = steps.find { |step| step["id"] == "remove_legacy_github_mcp" }
+prepare_home = steps.find { |step| step["id"] == "prepare_qoder_home" }
 resolve = steps.find { |step| step["id"] == "resolve_github_mcp" }
 setup = steps.find { |step| step["id"] == "setup_github_mcp" }
 run_cli = steps.find { |step| step["id"] == "run_cli" }
-cleanup = steps.find { |step| step["id"] == "cleanup_github_mcp" }
+cleanup_home = steps.find { |step| step["id"] == "cleanup_qoder_home" }
 
 assert_equal(false, migrate_legacy.nil?, "legacy migration step")
 assert_equal(false, migrate_legacy&.key?("if"), "unconditional legacy migration")
+assert_equal(false, prepare_home.nil?, "run-scoped Qoder home preparation")
+assert_equal(false, prepare_home&.key?("if"), "unconditional Qoder home preparation")
 assert_equal(
   true,
-  steps.index(migrate_legacy) < steps.index(setup),
-  "legacy migration precedes conditional setup"
+  steps.index(migrate_legacy) < steps.index(prepare_home),
+  "legacy migration precedes Qoder home copy"
 )
 assert_equal(
   "${{ inputs.enable_github_mcp }}",
@@ -41,6 +44,16 @@ assert_equal(
   "official setup condition"
 )
 assert_equal(
+  "${{ steps.prepare_qoder_home.outputs.qoder_home }}",
+  setup&.dig("env", "HOME"),
+  "isolated setup HOME"
+)
+assert_equal(
+  "${{ steps.prepare_qoder_home.outputs.qoder_home }}",
+  run_cli&.dig("env", "HOME"),
+  "isolated qodercli HOME"
+)
+assert_equal(
   "${{ steps.resolve_github_mcp.outputs.enabled == 'true' && steps.auth.outputs.github_token || '' }}",
   run_cli&.dig("env", "GITHUB_PERSONAL_ACCESS_TOKEN"),
   "runtime-only GitHub MCP token"
@@ -51,9 +64,14 @@ assert_equal(
   "GitHub host wiring"
 )
 assert_equal(
-  "${{ always() && steps.setup_github_mcp.outcome == 'success' }}",
-  cleanup&.fetch("if"),
-  "cleanup condition"
+  "${{ always() && steps.prepare_qoder_home.outcome == 'success' }}",
+  cleanup_home&.fetch("if"),
+  "isolated HOME cleanup condition"
+)
+assert_equal(
+  "${{ steps.prepare_qoder_home.outputs.qoder_home }}",
+  cleanup_home&.dig("env", "QODER_ACTION_HOME"),
+  "isolated HOME cleanup target"
 )
 
 puts "ok - composite action GitHub MCP wiring"

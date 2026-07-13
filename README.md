@@ -97,9 +97,9 @@ By default, the official server exposes its writable `default` toolsets: `contex
 | `GITHUB_LOCKDOWN_MODE` | Set to `1` to restrict untrusted public-repository content. |
 | `GITHUB_MCP_SERVER_IMAGE` | Override the pinned container image, for example with a trusted internal mirror. |
 
-The short-lived GitHub App installation token is passed to the container only through the process environment; it is never written to `~/.qoder.json`. The action temporarily installs its `github` MCP entry, restores any pre-existing user entry afterward, and removes the legacy `qoder_github` entry. `GITHUB_HOST` is forwarded automatically for GitHub Enterprise Server and `ghe.com` support.
+The short-lived GitHub App installation token is passed to the container only through the process environment; it is never written to `~/.qoder.json`. The action copies the sanitized user configuration into a unique run-scoped `HOME` under `RUNNER_TEMP`, installs its `github` MCP entry there, and removes that isolated home afterward. The original `github` entry is never overwritten, so concurrent jobs sharing a self-hosted runner home cannot restore over one another. The legacy `qoder_github` entry is removed permanently from the original configuration. `GITHUB_HOST` is forwarded automatically for GitHub Enterprise Server and `ghe.com` support.
 
-For compatibility throughout the `v0` series, `enable_qoder_github_mcp` remains available as a deprecated alias. When both enable inputs are set, `enable_github_mcp` takes precedence. Explicit prompt references to the old `mcp__qoder_github__*` namespace must migrate to `mcp__github__*`.
+For compatibility throughout the `v0` series, `enable_qoder_github_mcp` remains available as a deprecated alias. When both enable inputs are set, `enable_github_mcp` takes precedence. The deprecated setup script also bridges a legacy `GITHUB_TOKEN` to the official server's `GITHUB_PERSONAL_ACCESS_TOKEN` only when the server process starts. Explicit prompt references to the old `mcp__qoder_github__*` namespace must migrate to `mcp__github__*`.
 
 ## Customization
 

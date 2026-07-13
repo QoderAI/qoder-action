@@ -55,6 +55,12 @@ runs:
       run: |
         bash "${GITHUB_ACTION_PATH}/scripts/remove-legacy-github-mcp.sh"
 
+    - name: Prepare run-scoped Qoder home
+      id: prepare_qoder_home
+      shell: bash
+      run: |
+        bash "${GITHUB_ACTION_PATH}/scripts/prepare-qoder-home.sh"
+
     - name: Install qodercli
       shell: bash
       env:
@@ -88,6 +94,8 @@ runs:
       id: setup_github_mcp
       if: steps.resolve_github_mcp.outputs.enabled == 'true'
       shell: bash
+      env:
+        HOME: ${{ steps.prepare_qoder_home.outputs.qoder_home }}
       run: |
         bash "${GITHUB_ACTION_PATH}/scripts/setup-github-mcp.sh"
 
@@ -95,6 +103,7 @@ runs:
       id: run_cli
       shell: bash
       env:
+        HOME: ${{ steps.prepare_qoder_home.outputs.qoder_home }}
         QODER_PERSONAL_ACCESS_TOKEN: ${{ inputs.qoder_personal_access_token }}
         GITHUB_TOKEN: ${{ steps.auth.outputs.github_token }}
         GITHUB_PERSONAL_ACCESS_TOKEN: ${{ steps.resolve_github_mcp.outputs.enabled == 'true' && steps.auth.outputs.github_token || '' }}
@@ -104,11 +113,11 @@ runs:
       run: |
         bash "${GITHUB_ACTION_PATH}/scripts/run-qodercli.sh"
 
-    - name: Restore previous GitHub MCP configuration
-      id: cleanup_github_mcp
-      if: ${{ always() && steps.setup_github_mcp.outcome == 'success' }}
+    - name: Remove run-scoped Qoder home
+      id: cleanup_qoder_home
+      if: ${{ always() && steps.prepare_qoder_home.outcome == 'success' }}
       shell: bash
       env:
-        GITHUB_MCP_BACKUP_FILE: ${{ steps.setup_github_mcp.outputs.backup_file }}
+        QODER_ACTION_HOME: ${{ steps.prepare_qoder_home.outputs.qoder_home }}
       run: |
-        bash "${GITHUB_ACTION_PATH}/scripts/cleanup-github-mcp.sh"
+        bash "${GITHUB_ACTION_PATH}/scripts/cleanup-qoder-home.sh"

@@ -8,9 +8,6 @@ source "${SCRIPT_DIR}/github-mcp-common.sh"
 
 bash "${SCRIPT_DIR}/remove-legacy-github-mcp.sh"
 
-: "${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
-: "${RUNNER_TEMP:?RUNNER_TEMP is required}"
-
 if ! command -v jq >/dev/null 2>&1; then
   echo "::error::jq is required to configure the GitHub MCP Server." >&2
   exit 1
@@ -27,6 +24,7 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 IMAGE="$(github_mcp_server_image)"
+LAUNCHER="${SCRIPT_DIR}/run-github-mcp-server.sh"
 echo "::group::Pulling official GitHub MCP Server image"
 if ! docker pull "${IMAGE}"; then
   echo "::endgroup::"
@@ -36,55 +34,21 @@ fi
 echo "::endgroup::"
 
 CONFIG_FILE="${HOME}/.qoder.json"
-TMP_CONFIG=""
-BACKUP_FILE=""
-SETUP_COMPLETE="false"
-
-cleanup() {
-  if [[ -n "${TMP_CONFIG}" ]]; then
-    rm -f "${TMP_CONFIG}"
-  fi
-  if [[ "${SETUP_COMPLETE}" != "true" && -n "${BACKUP_FILE}" && -f "${BACKUP_FILE}" ]]; then
-    GITHUB_MCP_BACKUP_FILE="${BACKUP_FILE}" \
-      bash "${SCRIPT_DIR}/cleanup-github-mcp.sh" >/dev/null 2>&1 || true
-  fi
-}
-trap cleanup EXIT
-
 mkdir -p "${HOME}"
 TMP_CONFIG="$(mktemp "${HOME}/.qoder.json.tmp.XXXXXX")"
+trap 'rm -f "${TMP_CONFIG}"' EXIT
 if [[ ! -f "${CONFIG_FILE}" ]]; then
   echo "{}" > "${CONFIG_FILE}"
 fi
 
-BACKUP_FILE="$(mktemp "${RUNNER_TEMP}/qoder-github-mcp-backup.XXXXXX.json")"
-
-jq '{
-  "had_mcp_servers": has("mcpServers"),
-  "had_github": ((.mcpServers // {}) | has("github")),
-  "github": (.mcpServers.github // null)
-}' "${CONFIG_FILE}" > "${BACKUP_FILE}"
-chmod 600 "${BACKUP_FILE}"
-
-jq --arg image "${IMAGE}" '
+jq --arg image "${IMAGE}" --arg launcher "${LAUNCHER}" '
   if .mcpServers == null then .mcpServers = {} else . end
   | .mcpServers.github = {
-      "command": "docker",
-      "args": [
-        "run", "-i", "--rm",
-        "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
-        "-e", "GITHUB_HOST",
-        "-e", "GITHUB_TOOLSETS",
-        "-e", "GITHUB_TOOLS",
-        "-e", "GITHUB_READ_ONLY",
-        "-e", "GITHUB_LOCKDOWN_MODE",
-        $image
-      ],
+      "command": "bash",
+      "args": [$launcher, $image],
       "type": "stdio"
     }
 ' "${CONFIG_FILE}" > "${TMP_CONFIG}"
 
 mv "${TMP_CONFIG}" "${CONFIG_FILE}"
-echo "backup_file=${BACKUP_FILE}" >> "${GITHUB_OUTPUT}"
-SETUP_COMPLETE="true"
 echo "✓ Official GitHub MCP Server configured at ${CONFIG_FILE}"

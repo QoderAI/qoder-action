@@ -36,7 +36,7 @@ create_fake_docker() {
   cat > "${bin_dir}/docker" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$*" >> "${FAKE_DOCKER_LOG}"
+printf 'token=%s args=%s\n' "${GITHUB_PERSONAL_ACCESS_TOKEN:-missing}" "$*" >> "${FAKE_DOCKER_LOG}"
 if [[ "${1:-}" == "${FAKE_DOCKER_FAIL_COMMAND:-}" ]]; then
   exit 42
 fi
@@ -169,21 +169,16 @@ JSON
     GITHUB_PERSONAL_ACCESS_TOKEN="must-not-be-written"
 
   actual="$(jq -S . "${test_dir}/home/.qoder.json")"
-  expected="$(jq -S . <<'JSON'
+  expected="$(jq -S --arg launcher "${ROOT_DIR}/scripts/run-github-mcp-server.sh" \
+    '.mcpServers.github.args[0] = $launcher' <<'JSON'
 {
   "theme": "dark",
   "mcpServers": {
     "other": { "command": "other-server" },
     "github": {
-      "command": "docker",
+      "command": "bash",
       "args": [
-        "run", "-i", "--rm",
-        "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
-        "-e", "GITHUB_HOST",
-        "-e", "GITHUB_TOOLSETS",
-        "-e", "GITHUB_TOOLS",
-        "-e", "GITHUB_READ_ONLY",
-        "-e", "GITHUB_LOCKDOWN_MODE",
+        "",
         "ghcr.io/github/github-mcp-server:v1.5.0@sha256:e25564dccc9110a70a77b9df560cbde11aa392fcb5f08b9abe5c4ebc6d146ea4"
       ],
       "type": "stdio"
@@ -194,53 +189,6 @@ JSON
 )"
 
   assert_equals "${expected}" "${actual}" "official GitHub MCP configuration"
-
-  rm -rf "${test_dir}"
-}
-
-test_cleanup_restores_user_github_server_only() {
-  local test_dir
-  local backup_file
-  local actual
-  local expected
-
-  create_mcp_fixture test_dir
-
-  cat > "${test_dir}/home/.qoder.json" <<'JSON'
-{
-  "mcpServers": {
-    "github": { "command": "user-github-server" },
-    "qoder_github": { "command": "legacy-server" },
-    "other": { "command": "other-server" }
-  }
-}
-JSON
-
-  run_official_setup "${test_dir}"
-
-  backup_file="$(sed -n 's/^backup_file=//p' "${test_dir}/github-output")"
-
-  jq '.mcpServers.during_run = {"command": "created-during-run"}' \
-    "${test_dir}/home/.qoder.json" > "${test_dir}/updated-config"
-  mv "${test_dir}/updated-config" "${test_dir}/home/.qoder.json"
-
-  HOME="${test_dir}/home" \
-    GITHUB_MCP_BACKUP_FILE="${backup_file}" \
-    bash "${ROOT_DIR}/scripts/cleanup-github-mcp.sh"
-
-  actual="$(jq -S . "${test_dir}/home/.qoder.json")"
-  expected="$(jq -S . <<'JSON'
-{
-  "mcpServers": {
-    "github": { "command": "user-github-server" },
-    "other": { "command": "other-server" },
-    "during_run": { "command": "created-during-run" }
-  }
-}
-JSON
-)"
-
-  assert_equals "${expected}" "${actual}" "targeted GitHub MCP restoration"
 
   rm -rf "${test_dir}"
 }
@@ -295,7 +243,42 @@ test_legacy_script_delegates_to_official_setup() {
   fi
 
   command="$(jq -r '.mcpServers.github.command' "${test_dir}/home/.qoder.json")"
-  assert_equals "docker" "${command}" "legacy setup delegation"
+  assert_equals "bash" "${command}" "legacy setup delegation"
+
+  rm -rf "${test_dir}"
+}
+
+test_legacy_token_is_bridged_at_runtime() {
+  local test_dir
+  local runtime_command
+  local runtime_log
+  local runtime_args=()
+
+  create_mcp_fixture test_dir
+
+  run_legacy_setup "${test_dir}" GITHUB_TOKEN="legacy-token" >/dev/null
+
+  runtime_command="$(jq -r '.mcpServers.github.command' "${test_dir}/home/.qoder.json")"
+  while IFS= read -r argument; do
+    runtime_args+=("${argument}")
+  done < <(jq -r '.mcpServers.github.args[]' "${test_dir}/home/.qoder.json")
+
+  : > "${test_dir}/docker.log"
+  env -u GITHUB_PERSONAL_ACCESS_TOKEN \
+    PATH="${test_dir}/bin:${PATH}" \
+    GITHUB_TOKEN="legacy-token" \
+    FAKE_DOCKER_LOG="${test_dir}/docker.log" \
+    "${runtime_command}" "${runtime_args[@]}"
+
+  runtime_log="$(cat "${test_dir}/docker.log")"
+  assert_equals \
+    "token=legacy-token args=run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN -e GITHUB_HOST -e GITHUB_TOOLSETS -e GITHUB_TOOLS -e GITHUB_READ_ONLY -e GITHUB_LOCKDOWN_MODE ghcr.io/github/github-mcp-server:v1.5.0@sha256:e25564dccc9110a70a77b9df560cbde11aa392fcb5f08b9abe5c4ebc6d146ea4" \
+    "${runtime_log}" \
+    "legacy token runtime bridge"
+
+  if grep -q "legacy-token" "${test_dir}/home/.qoder.json"; then
+    fail "legacy token must not be written to the MCP configuration"
+  fi
 
   rm -rf "${test_dir}"
 }
@@ -340,13 +323,72 @@ JSON
   rm -rf "${test_dir}"
 }
 
+test_concurrent_runs_use_isolated_qoder_homes() {
+  local test_dir
+  local qoder_home_a
+  local qoder_home_b
+  local original_before
+  local original_after
+
+  create_mcp_fixture test_dir
+
+  cat > "${test_dir}/home/.qoder.json" <<'JSON'
+{
+  "mcpServers": {
+    "github": { "command": "user-github-server" },
+    "other": { "command": "other-server" }
+  }
+}
+JSON
+  original_before="$(jq -S . "${test_dir}/home/.qoder.json")"
+
+  HOME="${test_dir}/home" \
+    RUNNER_TEMP="${test_dir}/runner-temp" \
+    GITHUB_OUTPUT="${test_dir}/prepare-a-output" \
+    bash "${ROOT_DIR}/scripts/prepare-qoder-home.sh"
+  HOME="${test_dir}/home" \
+    RUNNER_TEMP="${test_dir}/runner-temp" \
+    GITHUB_OUTPUT="${test_dir}/prepare-b-output" \
+    bash "${ROOT_DIR}/scripts/prepare-qoder-home.sh"
+
+  qoder_home_a="$(sed -n 's/^qoder_home=//p' "${test_dir}/prepare-a-output")"
+  qoder_home_b="$(sed -n 's/^qoder_home=//p' "${test_dir}/prepare-b-output")"
+  if [[ -z "${qoder_home_a}" || -z "${qoder_home_b}" || "${qoder_home_a}" == "${qoder_home_b}" ]]; then
+    fail "concurrent runs should receive distinct Qoder homes"
+  fi
+
+  run_official_setup "${test_dir}" \
+    HOME="${qoder_home_a}" \
+    GITHUB_OUTPUT="${test_dir}/setup-a-output"
+  run_official_setup "${test_dir}" \
+    HOME="${qoder_home_b}" \
+    GITHUB_OUTPUT="${test_dir}/setup-b-output"
+
+  original_after="$(jq -S . "${test_dir}/home/.qoder.json")"
+  assert_equals "${original_before}" "${original_after}" "shared HOME after concurrent setup"
+
+  RUNNER_TEMP="${test_dir}/runner-temp" \
+    QODER_ACTION_HOME="${qoder_home_a}" \
+    bash "${ROOT_DIR}/scripts/cleanup-qoder-home.sh"
+  RUNNER_TEMP="${test_dir}/runner-temp" \
+    QODER_ACTION_HOME="${qoder_home_b}" \
+    bash "${ROOT_DIR}/scripts/cleanup-qoder-home.sh"
+
+  if [[ -e "${qoder_home_a}" || -e "${qoder_home_b}" ]]; then
+    fail "run-scoped Qoder homes should be removed independently"
+  fi
+
+  rm -rf "${test_dir}"
+}
+
 run_test "GitHub MCP defaults to enabled" test_mcp_defaults_to_enabled
 run_test "canonical input wins conflicts" test_new_input_overrides_legacy_input
 run_test "invalid enable input fails" test_invalid_input_fails
 run_test "setup replaces legacy server with official server" test_setup_replaces_legacy_with_official_server
-run_test "cleanup restores only the user's GitHub server" test_cleanup_restores_user_github_server_only
 run_test "Docker pull failure only leaves permanent legacy migration" test_docker_pull_failure_is_atomic
 run_test "legacy setup script delegates to official setup" test_legacy_script_delegates_to_official_setup
+run_test "legacy token is bridged only at runtime" test_legacy_token_is_bridged_at_runtime
 run_test "legacy config is removed even without official setup" test_legacy_config_is_removed_without_official_setup
+run_test "concurrent runs use isolated Qoder homes" test_concurrent_runs_use_isolated_qoder_homes
 
 echo "1..${TESTS_RUN}"
