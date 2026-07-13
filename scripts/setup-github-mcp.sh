@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091 # Resolved relative to this script at runtime.
 source "${SCRIPT_DIR}/github-mcp-common.sh"
 
+bash "${SCRIPT_DIR}/remove-legacy-github-mcp.sh"
+
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
 
@@ -55,12 +57,6 @@ if [[ ! -f "${CONFIG_FILE}" ]]; then
   echo "{}" > "${CONFIG_FILE}"
 fi
 
-if ! jq -e 'type == "object" and ((.mcpServers // {}) | type == "object")' \
-  "${CONFIG_FILE}" >/dev/null; then
-  echo "::error::${CONFIG_FILE} must contain a JSON object with an optional object-valued mcpServers field." >&2
-  exit 1
-fi
-
 BACKUP_FILE="$(mktemp "${RUNNER_TEMP}/qoder-github-mcp-backup.XXXXXX.json")"
 
 jq '{
@@ -72,7 +68,6 @@ chmod 600 "${BACKUP_FILE}"
 
 jq --arg image "${IMAGE}" '
   if .mcpServers == null then .mcpServers = {} else . end
-  | del(.mcpServers.qoder_github)
   | .mcpServers.github = {
       "command": "docker",
       "args": [

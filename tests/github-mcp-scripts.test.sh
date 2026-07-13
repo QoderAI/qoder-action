@@ -247,8 +247,8 @@ JSON
 
 test_docker_pull_failure_is_atomic() {
   local test_dir
-  local before
   local after
+  local expected
 
   create_mcp_fixture test_dir
 
@@ -260,7 +260,6 @@ test_docker_pull_failure_is_atomic() {
   }
 }
 JSON
-  before="$(jq -S . "${test_dir}/home/.qoder.json")"
 
   if run_official_setup "${test_dir}" \
     FAKE_DOCKER_FAIL_COMMAND="pull" >/dev/null 2>&1; then
@@ -268,7 +267,15 @@ JSON
   fi
 
   after="$(jq -S . "${test_dir}/home/.qoder.json")"
-  assert_equals "${before}" "${after}" "configuration after failed Docker pull"
+  expected="$(jq -S . <<'JSON'
+{
+  "mcpServers": {
+    "github": { "command": "user-github-server" }
+  }
+}
+JSON
+)"
+  assert_equals "${expected}" "${after}" "configuration after failed Docker pull"
 
   rm -rf "${test_dir}"
 }
@@ -338,7 +345,7 @@ run_test "canonical input wins conflicts" test_new_input_overrides_legacy_input
 run_test "invalid enable input fails" test_invalid_input_fails
 run_test "setup replaces legacy server with official server" test_setup_replaces_legacy_with_official_server
 run_test "cleanup restores only the user's GitHub server" test_cleanup_restores_user_github_server_only
-run_test "Docker pull failure leaves configuration unchanged" test_docker_pull_failure_is_atomic
+run_test "Docker pull failure only leaves permanent legacy migration" test_docker_pull_failure_is_atomic
 run_test "legacy setup script delegates to official setup" test_legacy_script_delegates_to_official_setup
 run_test "legacy config is removed even without official setup" test_legacy_config_is_removed_without_official_setup
 
