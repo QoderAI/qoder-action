@@ -78,6 +78,8 @@ echo "Waiting for exclusive access to ${HOME}/.qoder.json..."
 flock 9
 echo "✓ Exclusive Qoder configuration lock acquired"
 
+bash "${SCRIPT_DIR}/remove-legacy-github-mcp.sh" 9>&-
+
 if [[ "${ENABLE_GITHUB_MCP}" == "false" ]]; then
   bash "${SCRIPT_DIR}/run-qodercli.sh" 9>&-
   exit 0

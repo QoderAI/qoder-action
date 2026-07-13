@@ -23,13 +23,7 @@ setup = steps.find { |step| step["id"] == "setup_github_mcp" }
 run_cli = steps.find { |step| step["id"] == "run_cli" }
 cleanup = steps.find { |step| step["id"] == "cleanup_github_mcp" }
 
-assert_equal(false, migrate_legacy.nil?, "legacy migration step")
-assert_equal(false, migrate_legacy&.key?("if"), "unconditional legacy migration")
-assert_equal(
-  true,
-  steps.index(migrate_legacy) < steps.index(run_cli),
-  "legacy migration precedes qodercli lifecycle"
-)
+assert_equal(true, migrate_legacy.nil?, "legacy migration is owned by the locked lifecycle")
 assert_equal(
   "${{ inputs.enable_github_mcp }}",
   resolve&.dig("env", "INPUT_ENABLE_GITHUB_MCP"),

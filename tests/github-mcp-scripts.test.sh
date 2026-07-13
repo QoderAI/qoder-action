@@ -76,6 +76,9 @@ actual_github_command="$(jq -r '.mcpServers.github.command // "missing"' "${HOME
 if [[ "${actual_github_command}" != "${FAKE_EXPECTED_GITHUB_COMMAND}" ]]; then
   exit 46
 fi
+if jq -e '(.mcpServers // {}) | has("qoder_github")' "${HOME}/.qoder.json" >/dev/null; then
+  exit 47
+fi
 if [[ "${HOME}" != "${FAKE_EXPECTED_HOME}" || ! -x "${HOME}/bin/user-mcp-server" ]]; then
   exit 44
 fi
@@ -554,6 +557,51 @@ JSON
   rm -rf "${test_dir}"
 }
 
+test_disabled_run_migrates_legacy_before_qodercli() {
+  local test_dir
+  local actual
+  local expected
+  local release_file
+
+  create_mcp_fixture test_dir
+  create_fake_node "${test_dir}/bin"
+  mkdir -p "${test_dir}/home/.docker" "${test_dir}/home/bin"
+  printf '{}\n' > "${test_dir}/home/.docker/config.json"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${test_dir}/home/bin/user-mcp-server"
+  chmod +x "${test_dir}/home/bin/user-mcp-server"
+
+  cat > "${test_dir}/home/.qoder.json" <<'JSON'
+{
+  "mcpServers": {
+    "github": { "command": "user-github-server" },
+    "qoder_github": { "command": "legacy-server" },
+    "other": { "command": "other-server" }
+  }
+}
+JSON
+  release_file="${test_dir}/release"
+  touch "${release_file}"
+
+  run_locked_lifecycle \
+    "${test_dir}" "disabled-migration" "${test_dir}/started-disabled-migration" "${release_file}" \
+    "0" "false" "user-github-server" \
+    > "${test_dir}/run-disabled-migration.log" 2>&1
+
+  actual="$(jq -S . "${test_dir}/home/.qoder.json")"
+  expected="$(jq -S . <<'JSON'
+{
+  "mcpServers": {
+    "github": { "command": "user-github-server" },
+    "other": { "command": "other-server" }
+  }
+}
+JSON
+)"
+  assert_equals "${expected}" "${actual}" "disabled lifecycle legacy migration"
+
+  rm -rf "${test_dir}"
+}
+
 test_failed_run_restores_config_and_releases_lock() {
   local test_dir
   local original_before
@@ -638,6 +686,7 @@ run_test "legacy token crosses steps without entering Qoder config" test_legacy_
 run_test "legacy config is removed even without official setup" test_legacy_config_is_removed_without_official_setup
 run_test "concurrent runs serialize the shared Qoder configuration" test_concurrent_runs_serialize_shared_home
 run_test "disabled runs wait for enabled configuration restore" test_disabled_run_waits_for_enabled_restore
+run_test "disabled runs migrate legacy config before qodercli" test_disabled_run_migrates_legacy_before_qodercli
 run_test "failed runs restore configuration and release the lock" test_failed_run_restores_config_and_releases_lock
 run_test "null mcpServers shape is restored" test_null_mcp_servers_shape_is_restored
 
