@@ -85,7 +85,7 @@ This action uses OpenID Connect (OIDC) to securely authenticate with Qoder servi
 
 The GitHub MCP integration runs the official [`github/github-mcp-server`](https://github.com/github/github-mcp-server) container under the server name `github`. Its tools therefore use the `mcp__github__*` namespace. The default image is release `v1.5.0`, pinned to its immutable multi-platform manifest digest rather than a floating tag.
 
-The integration is enabled by default and requires a Linux runner with a working Docker daemon. If Docker or the pinned image is unavailable while MCP is enabled, the action fails immediately. Set `enable_github_mcp: false` when the workflow does not need GitHub MCP tools.
+The integration is enabled by default and requires a Linux runner with a working Docker daemon and the standard `flock` utility. If Docker, `flock`, or the pinned image is unavailable while MCP is enabled, the action fails immediately. Set `enable_github_mcp: false` when the workflow does not need GitHub MCP tools.
 
 By default, the official server exposes its writable `default` toolsets: `context`, `repos`, `issues`, `pull_requests`, and `users`. GitHub App token permissions remain the authorization boundary. Advanced workflows can set these environment variables on the action step:
 
@@ -97,9 +97,9 @@ By default, the official server exposes its writable `default` toolsets: `contex
 | `GITHUB_LOCKDOWN_MODE` | Set to `1` to restrict untrusted public-repository content. |
 | `GITHUB_MCP_SERVER_IMAGE` | Override the pinned container image, for example with a trusted internal mirror. |
 
-The short-lived GitHub App installation token is passed to the container only through the process environment; it is never written to `~/.qoder.json`. The action copies the sanitized user configuration into a unique run-scoped `HOME` under `RUNNER_TEMP`, installs its `github` MCP entry there, and removes that isolated home afterward. The original `github` entry is never overwritten, so concurrent jobs sharing a self-hosted runner home cannot restore over one another. The legacy `qoder_github` entry is removed permanently from the original configuration. `GITHUB_HOST` is forwarded automatically for GitHub Enterprise Server and `ghe.com` support.
+The short-lived GitHub App installation token is passed to the container only through the process environment; it is never written to `~/.qoder.json`. The action keeps the caller's real `HOME` so Docker credentials and unrelated user MCP servers retain their normal paths. While GitHub MCP is enabled, an OS-level lock serializes the setup → qodercli → restore lifecycle for jobs sharing that home, and the previous user `github` entry is restored before releasing the lock. The legacy `qoder_github` entry is removed permanently. `GITHUB_HOST` is forwarded automatically for GitHub Enterprise Server and `ghe.com` support.
 
-For compatibility throughout the `v0` series, `enable_qoder_github_mcp` remains available as a deprecated alias. When both enable inputs are set, `enable_github_mcp` takes precedence. The deprecated setup script also bridges a legacy `GITHUB_TOKEN` to the official server's `GITHUB_PERSONAL_ACCESS_TOKEN` only when the server process starts. Explicit prompt references to the old `mcp__qoder_github__*` namespace must migrate to `mcp__github__*`.
+For compatibility throughout the `v0` series, `enable_qoder_github_mcp` remains available as a deprecated alias. When both enable inputs are set, `enable_github_mcp` takes precedence. In GitHub Actions, the deprecated setup script propagates a legacy `GITHUB_TOKEN` through the runner-managed `GITHUB_ENV` mechanism, then the runtime launcher bridges it to the official server's `GITHUB_PERSONAL_ACCESS_TOKEN`; neither variable is written to the Qoder configuration. Explicit prompt references to the old `mcp__qoder_github__*` namespace must migrate to `mcp__github__*`.
 
 ## Customization
 

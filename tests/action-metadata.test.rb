@@ -18,20 +18,17 @@ assert_equal("", inputs.fetch("enable_qoder_github_mcp").fetch("default"), "lega
 
 steps = ACTION.fetch("runs").fetch("steps")
 migrate_legacy = steps.find { |step| step["id"] == "remove_legacy_github_mcp" }
-prepare_home = steps.find { |step| step["id"] == "prepare_qoder_home" }
 resolve = steps.find { |step| step["id"] == "resolve_github_mcp" }
 setup = steps.find { |step| step["id"] == "setup_github_mcp" }
 run_cli = steps.find { |step| step["id"] == "run_cli" }
-cleanup_home = steps.find { |step| step["id"] == "cleanup_qoder_home" }
+cleanup = steps.find { |step| step["id"] == "cleanup_github_mcp" }
 
 assert_equal(false, migrate_legacy.nil?, "legacy migration step")
 assert_equal(false, migrate_legacy&.key?("if"), "unconditional legacy migration")
-assert_equal(false, prepare_home.nil?, "run-scoped Qoder home preparation")
-assert_equal(false, prepare_home&.key?("if"), "unconditional Qoder home preparation")
 assert_equal(
   true,
-  steps.index(migrate_legacy) < steps.index(prepare_home),
-  "legacy migration precedes Qoder home copy"
+  steps.index(migrate_legacy) < steps.index(run_cli),
+  "legacy migration precedes qodercli lifecycle"
 )
 assert_equal(
   "${{ inputs.enable_github_mcp }}",
@@ -39,19 +36,24 @@ assert_equal(
   "canonical input wiring"
 )
 assert_equal(
-  "steps.resolve_github_mcp.outputs.enabled == 'true'",
-  setup&.fetch("if"),
-  "official setup condition"
+  true,
+  setup.nil?,
+  "setup is owned by the locked qodercli lifecycle"
 )
 assert_equal(
-  "${{ steps.prepare_qoder_home.outputs.qoder_home }}",
-  setup&.dig("env", "HOME"),
-  "isolated setup HOME"
+  true,
+  cleanup.nil?,
+  "cleanup is owned by the locked qodercli lifecycle"
 )
 assert_equal(
-  "${{ steps.prepare_qoder_home.outputs.qoder_home }}",
+  nil,
   run_cli&.dig("env", "HOME"),
-  "isolated qodercli HOME"
+  "qodercli preserves the caller HOME"
+)
+assert_equal(
+  "${{ steps.resolve_github_mcp.outputs.enabled }}",
+  run_cli&.dig("env", "ENABLE_GITHUB_MCP"),
+  "locked lifecycle enablement"
 )
 assert_equal(
   "${{ steps.resolve_github_mcp.outputs.enabled == 'true' && steps.auth.outputs.github_token || '' }}",
@@ -64,14 +66,9 @@ assert_equal(
   "GitHub host wiring"
 )
 assert_equal(
-  "${{ always() && steps.prepare_qoder_home.outcome == 'success' }}",
-  cleanup_home&.fetch("if"),
-  "isolated HOME cleanup condition"
-)
-assert_equal(
-  "${{ steps.prepare_qoder_home.outputs.qoder_home }}",
-  cleanup_home&.dig("env", "QODER_ACTION_HOME"),
-  "isolated HOME cleanup target"
+  "bash \"${GITHUB_ACTION_PATH}/scripts/run-qodercli-with-github-mcp.sh\"",
+  run_cli&.fetch("run")&.strip,
+  "locked qodercli lifecycle entrypoint"
 )
 
 puts "ok - composite action GitHub MCP wiring"

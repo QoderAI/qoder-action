@@ -55,12 +55,6 @@ runs:
       run: |
         bash "${GITHUB_ACTION_PATH}/scripts/remove-legacy-github-mcp.sh"
 
-    - name: Prepare run-scoped Qoder home
-      id: prepare_qoder_home
-      shell: bash
-      run: |
-        bash "${GITHUB_ACTION_PATH}/scripts/prepare-qoder-home.sh"
-
     - name: Install qodercli
       shell: bash
       env:
@@ -90,20 +84,11 @@ runs:
       run: |
         bash "${GITHUB_ACTION_PATH}/scripts/resolve-github-mcp-enabled.sh"
 
-    - name: Setup official GitHub MCP Server
-      id: setup_github_mcp
-      if: steps.resolve_github_mcp.outputs.enabled == 'true'
-      shell: bash
-      env:
-        HOME: ${{ steps.prepare_qoder_home.outputs.qoder_home }}
-      run: |
-        bash "${GITHUB_ACTION_PATH}/scripts/setup-github-mcp.sh"
-
-    - name: Run qodercli
+    - name: Run qodercli with optional official GitHub MCP Server
       id: run_cli
       shell: bash
       env:
-        HOME: ${{ steps.prepare_qoder_home.outputs.qoder_home }}
+        ENABLE_GITHUB_MCP: ${{ steps.resolve_github_mcp.outputs.enabled }}
         QODER_PERSONAL_ACCESS_TOKEN: ${{ inputs.qoder_personal_access_token }}
         GITHUB_TOKEN: ${{ steps.auth.outputs.github_token }}
         GITHUB_PERSONAL_ACCESS_TOKEN: ${{ steps.resolve_github_mcp.outputs.enabled == 'true' && steps.auth.outputs.github_token || '' }}
@@ -111,13 +96,4 @@ runs:
         INPUT_PROMPT: ${{ inputs.prompt }}
         INPUT_FLAGS: ${{ inputs.flags }}
       run: |
-        bash "${GITHUB_ACTION_PATH}/scripts/run-qodercli.sh"
-
-    - name: Remove run-scoped Qoder home
-      id: cleanup_qoder_home
-      if: ${{ always() && steps.prepare_qoder_home.outcome == 'success' }}
-      shell: bash
-      env:
-        QODER_ACTION_HOME: ${{ steps.prepare_qoder_home.outputs.qoder_home }}
-      run: |
-        bash "${GITHUB_ACTION_PATH}/scripts/cleanup-qoder-home.sh"
+        bash "${GITHUB_ACTION_PATH}/scripts/run-qodercli-with-github-mcp.sh"
