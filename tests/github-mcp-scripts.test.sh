@@ -85,7 +85,8 @@ fi
 if [[ -e /dev/fd/9 ]]; then
   exit 45
 fi
-printf '%s\n' "$$" > "${FAKE_NODE_STARTED}"
+lifecycle_pid="$(ps -o ppid= -p "${PPID}" | tr -d '[:space:]')"
+printf '%s\n' "${lifecycle_pid}" > "${FAKE_NODE_STARTED}"
 
 if [[ -n "${FAKE_NODE_RELEASE:-}" ]]; then
   while [[ ! -e "${FAKE_NODE_RELEASE}" ]]; do
@@ -602,6 +603,94 @@ JSON
   rm -rf "${test_dir}"
 }
 
+test_next_run_recovers_after_sigkill() {
+  local test_dir
+  local killed_pid
+  local lifecycle_job_pid
+  local original_before
+  local original_after
+  local release_killed
+  local release_retry
+  local started_killed
+
+  create_mcp_fixture test_dir
+  create_fake_node "${test_dir}/bin"
+  mkdir -p "${test_dir}/home/.docker" "${test_dir}/home/bin"
+  printf '{}\n' > "${test_dir}/home/.docker/config.json"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${test_dir}/home/bin/user-mcp-server"
+  chmod +x "${test_dir}/home/bin/user-mcp-server"
+
+  cat > "${test_dir}/home/.qoder.json" <<'JSON'
+{
+  "mcpServers": {
+    "github": { "command": "user-github-server" },
+    "other": { "command": "other-server" }
+  }
+}
+JSON
+  original_before="$(jq -S . "${test_dir}/home/.qoder.json")"
+  started_killed="${test_dir}/started-killed"
+  release_killed="${test_dir}/release-killed"
+  release_retry="${test_dir}/release-retry"
+  touch "${release_retry}"
+
+  run_locked_lifecycle \
+    "${test_dir}" "killed" "${started_killed}" "${release_killed}" \
+    > "${test_dir}/run-killed.log" 2>&1 &
+  lifecycle_job_pid=$!
+  if ! wait_for_file "${started_killed}"; then
+    wait "${lifecycle_job_pid}" || true
+    fail "lifecycle selected for SIGKILL did not start"
+  fi
+
+  killed_pid="$(cat "${started_killed}")"
+  if [[ ! "${killed_pid}" =~ ^[0-9]+$ ]]; then
+    fail "fake node did not report the lifecycle PID"
+  fi
+  kill -KILL "${killed_pid}"
+  if wait "${lifecycle_job_pid}" 2>/dev/null; then
+    fail "SIGKILL should terminate the lifecycle"
+  fi
+  touch "${release_killed}"
+
+  run_locked_lifecycle \
+    "${test_dir}" "recover" "${test_dir}/started-recover" "${release_retry}" \
+    "0" "false" "user-github-server" \
+    > "${test_dir}/run-recover.log" 2>&1
+
+  original_after="$(jq -S . "${test_dir}/home/.qoder.json")"
+  assert_equals "${original_before}" "${original_after}" "shared HOME after SIGKILL recovery"
+  if [[ -e "${test_dir}/home/.qoder-action-github-mcp-backup.json" ]]; then
+    fail "SIGKILL recovery should consume the persistent backup journal"
+  fi
+
+  rm -rf "${test_dir}"
+}
+
+test_invalid_recovery_journal_is_retained() {
+  local test_dir
+  local release_file
+
+  create_mcp_fixture test_dir
+  printf '{}\n' > "${test_dir}/home/.qoder.json"
+  printf '{}\n' > "${test_dir}/home/.qoder-action-github-mcp-backup.json"
+  release_file="${test_dir}/release-invalid-journal"
+  touch "${release_file}"
+
+  if run_locked_lifecycle \
+    "${test_dir}" "invalid-journal" "${test_dir}/started-invalid-journal" "${release_file}" \
+    "0" "false" "missing" \
+    > "${test_dir}/run-invalid-journal.log" 2>&1; then
+    fail "invalid recovery journal should stop the lifecycle"
+  fi
+
+  if [[ ! -f "${test_dir}/home/.qoder-action-github-mcp-backup.json" ]]; then
+    fail "invalid recovery journal should be retained for manual recovery"
+  fi
+
+  rm -rf "${test_dir}"
+}
+
 test_failed_run_restores_config_and_releases_lock() {
   local test_dir
   local original_before
@@ -687,6 +776,8 @@ run_test "legacy config is removed even without official setup" test_legacy_conf
 run_test "concurrent runs serialize the shared Qoder configuration" test_concurrent_runs_serialize_shared_home
 run_test "disabled runs wait for enabled configuration restore" test_disabled_run_waits_for_enabled_restore
 run_test "disabled runs migrate legacy config before qodercli" test_disabled_run_migrates_legacy_before_qodercli
+run_test "next run recovers configuration after SIGKILL" test_next_run_recovers_after_sigkill
+run_test "invalid recovery journal is retained" test_invalid_recovery_journal_is_retained
 run_test "failed runs restore configuration and release the lock" test_failed_run_restores_config_and_releases_lock
 run_test "null mcpServers shape is restored" test_null_mcp_servers_shape_is_restored
 
