@@ -27,10 +27,15 @@ inputs:
     required: false
     default: '0.1.18'
 
-  enable_qoder_github_mcp:
-    description: 'Enable the qoder-github MCP Server for enhanced GitHub operations. This is required for built-in resources and advanced tool capabilities.'
+  enable_github_mcp:
+    description: 'Enable the official GitHub MCP Server. Defaults to true when neither this input nor the deprecated alias is set.'
     required: false
-    default: 'true'
+    default: ''
+
+  enable_qoder_github_mcp:
+    description: 'Deprecated alias for enable_github_mcp. It will be removed in v1.'
+    required: false
+    default: ''
 
 outputs:
   output_file:
@@ -64,13 +69,21 @@ runs:
       run: |
         bash "${GITHUB_ACTION_PATH}/scripts/configure-qoder-auth.sh"
 
-    - name: Setup qoder-github MCP Server
-      if: inputs.enable_qoder_github_mcp == 'true'
+    - name: Resolve GitHub MCP configuration
+      id: resolve_github_mcp
       shell: bash
       env:
-        GITHUB_TOKEN: ${{ steps.auth.outputs.github_token }}
+        INPUT_ENABLE_GITHUB_MCP: ${{ inputs.enable_github_mcp }}
+        INPUT_ENABLE_QODER_GITHUB_MCP: ${{ inputs.enable_qoder_github_mcp }}
       run: |
-        bash "${GITHUB_ACTION_PATH}/scripts/setup-qoder-github-mcp.sh"
+        bash "${GITHUB_ACTION_PATH}/scripts/resolve-github-mcp-enabled.sh"
+
+    - name: Setup official GitHub MCP Server
+      id: setup_github_mcp
+      if: steps.resolve_github_mcp.outputs.enabled == 'true'
+      shell: bash
+      run: |
+        bash "${GITHUB_ACTION_PATH}/scripts/setup-github-mcp.sh"
 
     - name: Run qodercli
       id: run_cli
@@ -78,7 +91,18 @@ runs:
       env:
         QODER_PERSONAL_ACCESS_TOKEN: ${{ inputs.qoder_personal_access_token }}
         GITHUB_TOKEN: ${{ steps.auth.outputs.github_token }}
+        GITHUB_PERSONAL_ACCESS_TOKEN: ${{ steps.resolve_github_mcp.outputs.enabled == 'true' && steps.auth.outputs.github_token || '' }}
+        GITHUB_HOST: ${{ github.server_url }}
         INPUT_PROMPT: ${{ inputs.prompt }}
         INPUT_FLAGS: ${{ inputs.flags }}
       run: |
         bash "${GITHUB_ACTION_PATH}/scripts/run-qodercli.sh"
+
+    - name: Restore previous GitHub MCP configuration
+      id: cleanup_github_mcp
+      if: ${{ always() && steps.setup_github_mcp.outcome == 'success' }}
+      shell: bash
+      env:
+        GITHUB_MCP_BACKUP_FILE: ${{ steps.setup_github_mcp.outputs.backup_file }}
+      run: |
+        bash "${GITHUB_ACTION_PATH}/scripts/cleanup-github-mcp.sh"

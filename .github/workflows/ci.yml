@@ -24,3 +24,10 @@ jobs:
       - name: Check JavaScript syntax
         run: node --check scripts/qoder-wrapper.js
 
+      - name: Run deterministic tests
+        run: |
+          bash tests/github-mcp-scripts.test.sh
+          ruby tests/action-metadata.test.rb
+
+      - name: Smoke test official GitHub MCP Server image
+        run: bash tests/github-mcp-docker-smoke.sh

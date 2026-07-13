@@ -7,6 +7,7 @@ Turn your GitHub repository into an intelligent workspace with **Qoder**. This a
 - **🤖 Intelligent Code Reviews**: Automatically analyze Pull Requests for bugs, security vulnerabilities, and code style issues before they merge.
 - **💬 Interactive Development**: Collaborate with `@qoder` directly in Issues and Pull Requests to explain code, refactor logic, or generate tests via chat.
 - **🧠 Context-Aware**: Inject project-specific knowledge (architecture, conventions) simply by adding an `Agents.md` file to your repository.
+- **🐙 Official GitHub Tools**: Uses GitHub's official MCP Server for repository, Issue, and Pull Request operations.
 - **🧩 Highly Extensible**: Define custom **Subagents** and **Slash Commands** to create tailored workflows that match your team's unique processes.
 - **⚡ Pipeline Ready**: Built for CI/CD with structured stream-json outputs, enabling seamless integration with other tools and scripts.
 
@@ -56,8 +57,9 @@ Browse the [`examples/`](./examples/) directory to choose a workflow that fits y
 | `prompt` | Instructions for `qodercli` (passed to `-p` flag). | **Yes** | - |
 | `qoder_personal_access_token` | Your Qoder Personal Access Token. | **Yes** | - |
 | `flags` | Additional CLI arguments for `qodercli`. | No | `''` |
-| `qodercli_version` | Version of `qodercli`. Default version recommended. | No | (Latest Compatible) |
-| `enable_qoder_github_mcp` | Enable qoder-github MCP Server. Required for built-in resources. | No | `true` |
+| `qodercli_version` | Version of `qodercli`. Default version recommended. | No | `0.1.18` |
+| `enable_github_mcp` | Enable GitHub's official MCP Server. | No | `true` (effective) |
+| `enable_qoder_github_mcp` | Deprecated alias for `enable_github_mcp`; removed in `v1`. | No | - |
 
 
 ### Secrets
@@ -78,6 +80,26 @@ This action provides outputs that can be consumed by subsequent steps in your wo
 ### Authentication
 
 This action uses OpenID Connect (OIDC) to securely authenticate with Qoder services. Ensure your workflow has the `id-token: write` permission.
+
+### Official GitHub MCP Server
+
+The GitHub MCP integration runs the official [`github/github-mcp-server`](https://github.com/github/github-mcp-server) container under the server name `github`. Its tools therefore use the `mcp__github__*` namespace. The default image is release `v1.5.0`, pinned to its immutable multi-platform manifest digest rather than a floating tag.
+
+The integration is enabled by default and requires a Linux runner with a working Docker daemon. If Docker or the pinned image is unavailable while MCP is enabled, the action fails immediately. Set `enable_github_mcp: false` when the workflow does not need GitHub MCP tools.
+
+By default, the official server exposes its writable `default` toolsets: `context`, `repos`, `issues`, `pull_requests`, and `users`. GitHub App token permissions remain the authorization boundary. Advanced workflows can set these environment variables on the action step:
+
+| Environment variable | Purpose |
+|---|---|
+| `GITHUB_TOOLSETS` | Select official MCP toolsets. |
+| `GITHUB_TOOLS` | Add individual official MCP tools. |
+| `GITHUB_READ_ONLY` | Set to `1` to disable mutating tools. |
+| `GITHUB_LOCKDOWN_MODE` | Set to `1` to restrict untrusted public-repository content. |
+| `GITHUB_MCP_SERVER_IMAGE` | Override the pinned container image, for example with a trusted internal mirror. |
+
+The short-lived GitHub App installation token is passed to the container only through the process environment; it is never written to `~/.qoder.json`. The action temporarily installs its `github` MCP entry, restores any pre-existing user entry afterward, and removes the legacy `qoder_github` entry. `GITHUB_HOST` is forwarded automatically for GitHub Enterprise Server and `ghe.com` support.
+
+For compatibility throughout the `v0` series, `enable_qoder_github_mcp` remains available as a deprecated alias. When both enable inputs are set, `enable_github_mcp` takes precedence. Explicit prompt references to the old `mcp__qoder_github__*` namespace must migrate to `mcp__github__*`.
 
 ## Customization
 
