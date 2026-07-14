@@ -23,6 +23,11 @@ function printGroupEnd() {
 function maskSensitiveString(value) {
   return value
     .replace(
+      /((?:^|[{\s,;])["']?(?:authorization|auth|token|password|secret|api[_-]?key|access[_-]?token|credential|private[_-]?key|x-qoder-personal-access-token)["']?\s*[:=]\s*)(["'])(.*?)\2/gim,
+      '$1$2******$2',
+    )
+    .replace(/(\b(?:bearer|basic)\s+)[^\s"',;}]+/gi, '$1******')
+    .replace(
       /(\b(?:authorization|x-qoder-personal-access-token)\s*:\s*(?:(?:bearer|basic|token)\s+)?)[^\s,;]+/gi,
       '$1******',
     )
