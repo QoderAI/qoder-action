@@ -69,7 +69,15 @@ fi
 CURRENT_STATE="$(jq -r --slurpfile backup "${GITHUB_MCP_BACKUP_FILE}" '
   ($backup[0]) as $saved
   | def has_github: ((.mcpServers // {}) | has("github"));
-  if has_github and (.mcpServers.github == $saved.temporary_github) then
+  def is_temporary_github_entry:
+    . == $saved.temporary_github
+    or (
+      type == "object"
+      and ((has("InProcessMcpServer") | not) or .InProcessMcpServer == null)
+      and ((has("WorkingDir") | not) or .WorkingDir == "")
+      and (del(.InProcessMcpServer, .WorkingDir) == $saved.temporary_github)
+    );
+  if has_github and (.mcpServers.github | is_temporary_github_entry) then
     "temporary"
   elif (($saved.had_github and has_github and (.mcpServers.github == $saved.github))
     or (($saved.had_github | not) and (has_github | not))) then

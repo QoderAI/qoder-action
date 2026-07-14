@@ -103,6 +103,24 @@ actual_github_command="$(jq -r '.mcpServers.github.command // "missing"' "${HOME
 if [[ "${actual_github_command}" != "${FAKE_EXPECTED_GITHUB_COMMAND}" ]]; then
   exit 46
 fi
+case "${FAKE_QODER_RUNTIME_FIELDS:-}" in
+  defaults)
+    tmp_config="$(mktemp "${HOME}/.qoder.json.runtime.XXXXXX")"
+    jq '.mcpServers.github += {
+      "InProcessMcpServer": null,
+      "WorkingDir": ""
+    }' "${HOME}/.qoder.json" > "${tmp_config}"
+    mv "${tmp_config}" "${HOME}/.qoder.json"
+    ;;
+  nondefault)
+    tmp_config="$(mktemp "${HOME}/.qoder.json.runtime.XXXXXX")"
+    jq '.mcpServers.github += {
+      "InProcessMcpServer": {"name": "changed"},
+      "WorkingDir": "/tmp/changed"
+    }' "${HOME}/.qoder.json" > "${tmp_config}"
+    mv "${tmp_config}" "${HOME}/.qoder.json"
+    ;;
+esac
 if jq -e '(.mcpServers // {}) | has("qoder_github")' "${HOME}/.qoder.json" >/dev/null; then
   exit 47
 fi
@@ -771,6 +789,7 @@ run_locked_lifecycle() {
     FAKE_EXPECTED_GITHUB_COMMAND="${expected_github_command}" \
     FAKE_EXPECTED_UMASK="${FAKE_EXPECTED_UMASK:-}" \
     FAKE_EXPECTED_PERSONAL_ACCESS_TOKEN="${FAKE_EXPECTED_PERSONAL_ACCESS_TOKEN:-}" \
+    FAKE_QODER_RUNTIME_FIELDS="${FAKE_QODER_RUNTIME_FIELDS:-}" \
     REAL_NODE_BINARY="${REAL_NODE_BINARY}" \
     FAKE_NODE_STARTED="${started_file}" \
     FAKE_NODE_RELEASE="${release_file}" \
@@ -1347,6 +1366,81 @@ JSON
   rm -rf "${test_dir}"
 }
 
+test_qoder_runtime_defaults_are_restored() {
+  local test_dir
+  local original_before
+  local original_after
+  local release_file
+
+  create_mcp_fixture test_dir
+  create_fake_node "${test_dir}/bin"
+  mkdir -p "${test_dir}/home/.docker" "${test_dir}/home/bin"
+  printf '{}\n' > "${test_dir}/home/.docker/config.json"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${test_dir}/home/bin/user-mcp-server"
+  chmod +x "${test_dir}/home/bin/user-mcp-server"
+
+  cat > "${test_dir}/home/.qoder.json" <<'JSON'
+{
+  "mcpServers": {
+    "github": { "command": "user-github-server" },
+    "other": { "command": "other-server" }
+  }
+}
+JSON
+  original_before="$(jq -S . "${test_dir}/home/.qoder.json")"
+  release_file="${test_dir}/release-runtime-defaults"
+  touch "${release_file}"
+
+  FAKE_QODER_RUNTIME_FIELDS="defaults" \
+    run_locked_lifecycle \
+      "${test_dir}" "runtime-defaults" "${test_dir}/started-runtime-defaults" "${release_file}" \
+      > "${test_dir}/run-runtime-defaults.log" 2>&1
+
+  original_after="$(jq -S . "${test_dir}/home/.qoder.json")"
+  assert_equals "${original_before}" "${original_after}" "configuration after Qoder runtime defaults"
+  if [[ -e "${test_dir}/home/.qoder-action-github-mcp-backup.json" ]]; then
+    fail "Qoder runtime defaults should not leave a recovery journal"
+  fi
+
+  rm -rf "${test_dir}"
+}
+
+test_nondefault_qoder_runtime_fields_remain_conflicts() {
+  local test_dir
+  local release_file
+
+  create_mcp_fixture test_dir
+  create_fake_node "${test_dir}/bin"
+  mkdir -p "${test_dir}/home/.docker" "${test_dir}/home/bin"
+  printf '{}\n' > "${test_dir}/home/.docker/config.json"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${test_dir}/home/bin/user-mcp-server"
+  chmod +x "${test_dir}/home/bin/user-mcp-server"
+  printf '{"mcpServers":{"github":{"command":"user-github-server"}}}\n' \
+    > "${test_dir}/home/.qoder.json"
+  release_file="${test_dir}/release-runtime-conflict"
+  touch "${release_file}"
+
+  if FAKE_QODER_RUNTIME_FIELDS="nondefault" \
+    run_locked_lifecycle \
+      "${test_dir}" "runtime-conflict" "${test_dir}/started-runtime-conflict" "${release_file}" \
+      > "${test_dir}/run-runtime-conflict.log" 2>&1; then
+    fail "non-default Qoder runtime fields should remain a recovery conflict"
+  fi
+
+  assert_equals \
+    "/tmp/changed" \
+    "$(jq -r '.mcpServers.github.WorkingDir' "${test_dir}/home/.qoder.json")" \
+    "non-default Qoder runtime field after recovery conflict"
+  if [[ ! -f "${test_dir}/home/.qoder-action-github-mcp-backup.json" ]]; then
+    fail "non-default Qoder runtime conflict should retain the backup journal"
+  fi
+  if ! grep -q "mcpServers.github changed" "${test_dir}/run-runtime-conflict.log"; then
+    fail "non-default Qoder runtime conflict should explain why recovery stopped"
+  fi
+
+  rm -rf "${test_dir}"
+}
+
 test_null_mcp_servers_shape_is_restored() {
   local test_dir
   local original_before
@@ -1408,6 +1502,8 @@ run_test "recovery rejects a retargeted configuration symlink" test_recovery_rej
 run_test "failed setup consumes a prepared journal" test_failed_setup_consumes_prepared_journal
 run_test "invalid recovery journal is retained" test_invalid_recovery_journal_is_retained
 run_test "failed runs restore configuration and release the lock" test_failed_run_restores_config_and_releases_lock
+run_test "Qoder runtime defaults are restored" test_qoder_runtime_defaults_are_restored
+run_test "non-default Qoder runtime fields remain conflicts" test_nondefault_qoder_runtime_fields_remain_conflicts
 run_test "null mcpServers shape is restored" test_null_mcp_servers_shape_is_restored
 
 echo "1..${TESTS_RUN}"
