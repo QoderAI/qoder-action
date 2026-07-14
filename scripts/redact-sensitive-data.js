@@ -18,8 +18,7 @@ function isSensitiveKey(key) {
 
 function isAssignmentBoundary(value, index) {
   if (index === 0) return true;
-  const previous = value[index - 1];
-  return /\s/u.test(previous) || '{[,;?&'.includes(previous);
+  return !isUnquotedKeyCharacter(value[index - 1]);
 }
 
 function isUnquotedKeyCharacter(character) {
@@ -48,7 +47,9 @@ function findClosingQuote(value, index, quote) {
 
 function findUnquotedValueEnd(value, index) {
   let cursor = index;
-  while (cursor < value.length && !'\r\n,;}&'.includes(value[cursor])) cursor += 1;
+  while (cursor < value.length && !['\r', '\n', ',', ';', '}', '&', '"', "'"].includes(value[cursor])) {
+    cursor += 1;
+  }
   return cursor;
 }
 

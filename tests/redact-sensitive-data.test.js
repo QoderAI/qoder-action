@@ -17,6 +17,9 @@ const secrets = [
   'UNQUOTED_CLIENT_SECRET',
   'UNQUOTED_REFRESH_TOKEN',
   'UNQUOTED_PRIVATE_KEY',
+  'WRAPPED_CLIENT_SECRET',
+  'PIPE_REFRESH_TOKEN',
+  'SHELL_HEADER_KEY',
   'query-signature',
 ];
 const input = [
@@ -27,6 +30,9 @@ const input = [
   'client_secret=UNQUOTED_CLIENT_SECRET;',
   'refresh_token: UNQUOTED_REFRESH_TOKEN;',
   'privateKey=UNQUOTED_PRIVATE_KEY;',
+  'OAuthError(client_secret=WRAPPED_CLIENT_SECRET)',
+  'details|refresh_token=PIPE_REFRESH_TOKEN;',
+  "curl -H 'X-API-Key: SHELL_HEADER_KEY'",
   'https://example.test/file?x-amz-signature=query-signature&status=denied',
 ].join(' ');
 
@@ -35,6 +41,7 @@ for (const secret of secrets) {
   assert.ok(!redacted.includes(secret), `redacted output still contains ${secret}`);
 }
 assert.ok(redacted.includes('status=denied'));
+assert.ok(redacted.includes("curl -H 'X-API-Key: ******'"));
 assert.ok(redacted.includes('******'));
 
 assert.deepStrictEqual(
