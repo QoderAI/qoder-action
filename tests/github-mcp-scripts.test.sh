@@ -44,6 +44,15 @@ fi
 if [[ "${1:-}" == "${FAKE_DOCKER_FAIL_COMMAND:-}" ]]; then
   exit 42
 fi
+if [[ "${1:-}" == "pull" && -n "${FAKE_DOCKER_STARTED:-}" ]]; then
+  lifecycle_pid="$(ps -o ppid= -p "${PPID}" | tr -d '[:space:]')"
+  printf '%s %s\n' "${lifecycle_pid}" "${PPID}" > "${FAKE_DOCKER_STARTED}"
+  if [[ -n "${FAKE_DOCKER_RELEASE:-}" ]]; then
+    while [[ ! -e "${FAKE_DOCKER_RELEASE}" ]]; do
+      sleep 0.05
+    done
+  fi
+fi
 exit "${FAKE_DOCKER_EXIT:-0}"
 EOF
   chmod +x "${bin_dir}/docker"
@@ -265,6 +274,7 @@ test_docker_pull_failure_is_atomic() {
 JSON
 
   if run_official_setup "${test_dir}" \
+    QODER_ACTION_ALLOW_GITHUB_MCP_REPLACE="true" \
     FAKE_DOCKER_FAIL_COMMAND="pull" >/dev/null 2>&1; then
     fail "Docker pull failure should fail setup"
   fi
@@ -299,6 +309,40 @@ test_legacy_script_delegates_to_official_setup() {
 
   command="$(jq -r '.mcpServers.github.command' "${test_dir}/home/.qoder.json")"
   assert_equals "bash" "${command}" "legacy setup delegation"
+
+  rm -rf "${test_dir}"
+}
+
+test_legacy_setup_preserves_existing_github() {
+  local test_dir
+  local actual
+  local expected
+  local log_file
+
+  create_mcp_fixture test_dir
+  log_file="${test_dir}/legacy-existing-github.log"
+  cat > "${test_dir}/home/.qoder.json" <<'JSON'
+{
+  "mcpServers": {
+    "github": { "command": "user-github-server" },
+    "other": { "command": "other-server" }
+  }
+}
+JSON
+  expected="$(jq -S . "${test_dir}/home/.qoder.json")"
+
+  if run_legacy_setup "${test_dir}" > "${log_file}" 2>&1; then
+    fail "legacy setup should refuse to replace an existing GitHub MCP server"
+  fi
+
+  actual="$(jq -S . "${test_dir}/home/.qoder.json")"
+  assert_equals "${expected}" "${actual}" "existing GitHub MCP after legacy setup"
+  if ! grep -q "::error::.*already configured" "${log_file}"; then
+    fail "legacy setup should explain the existing GitHub MCP conflict"
+  fi
+  if [[ -s "${test_dir}/docker.log" ]]; then
+    fail "legacy setup should reject an existing GitHub MCP server before using Docker"
+  fi
 
   rm -rf "${test_dir}"
 }
@@ -385,6 +429,61 @@ JSON
   rm -rf "${test_dir}"
 }
 
+test_lifecycle_preserves_symlinked_config() {
+  local test_dir
+  local actual
+  local expected
+  local config_target
+  local release_file
+
+  create_mcp_fixture test_dir
+  create_fake_node "${test_dir}/bin"
+  mkdir -p "${test_dir}/home/.docker" "${test_dir}/home/bin" "${test_dir}/home/dotfiles"
+  printf '{}\n' > "${test_dir}/home/.docker/config.json"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${test_dir}/home/bin/user-mcp-server"
+  chmod +x "${test_dir}/home/bin/user-mcp-server"
+
+  config_target="${test_dir}/home/dotfiles/qoder.json"
+  cat > "${config_target}" <<'JSON'
+{
+  "mcpServers": {
+    "github": { "command": "user-github-server" },
+    "qoder_github": { "command": "legacy-server" },
+    "other": { "command": "other-server" }
+  }
+}
+JSON
+  ln -s "dotfiles/qoder.json" "${test_dir}/home/.qoder.json"
+  release_file="${test_dir}/release-symlink"
+  touch "${release_file}"
+
+  run_locked_lifecycle \
+    "${test_dir}" "symlink" "${test_dir}/started-symlink" "${release_file}" \
+    > "${test_dir}/run-symlink.log" 2>&1
+
+  if [[ ! -L "${test_dir}/home/.qoder.json" ]]; then
+    fail "lifecycle should preserve a symlinked Qoder configuration"
+  fi
+  assert_equals \
+    "dotfiles/qoder.json" \
+    "$(readlink "${test_dir}/home/.qoder.json")" \
+    "Qoder configuration symlink target"
+
+  actual="$(jq -S . "${config_target}")"
+  expected="$(jq -S . <<'JSON'
+{
+  "mcpServers": {
+    "github": { "command": "user-github-server" },
+    "other": { "command": "other-server" }
+  }
+}
+JSON
+)"
+  assert_equals "${expected}" "${actual}" "symlink target after GitHub MCP lifecycle"
+
+  rm -rf "${test_dir}"
+}
+
 test_qoder_wrapper_forwards_lock_lease() {
   local test_dir
   local output_file
@@ -447,6 +546,8 @@ run_locked_lifecycle() {
     FAKE_DOCKER_LOG="${test_dir}/docker.log" \
     FAKE_DOCKER_FAIL_COMMAND="${FAKE_DOCKER_FAIL_COMMAND:-}" \
     FAKE_DOCKER_REQUIRE_CONFIG="true" \
+    FAKE_DOCKER_STARTED="${FAKE_DOCKER_STARTED:-}" \
+    FAKE_DOCKER_RELEASE="${FAKE_DOCKER_RELEASE:-}" \
     FAKE_EXPECTED_HOME="${test_dir}/home" \
     FAKE_EXPECTED_GITHUB_COMMAND="${expected_github_command}" \
     FAKE_NODE_STARTED="${started_file}" \
@@ -465,6 +566,18 @@ wait_for_file() {
   done
 
   [[ -e "${file}" ]]
+}
+
+wait_for_process_exit() {
+  local pid="$1"
+  local attempts=0
+
+  while kill -0 "${pid}" 2>/dev/null && [[ "${attempts}" -lt 200 ]]; do
+    sleep 0.05
+    attempts=$((attempts + 1))
+  done
+
+  ! kill -0 "${pid}" 2>/dev/null
 }
 
 test_concurrent_runs_serialize_shared_home() {
@@ -718,6 +831,69 @@ JSON
   rm -rf "${test_dir}"
 }
 
+test_next_run_waits_for_orphaned_setup() {
+  local test_dir
+  local lifecycle_job_pid
+  local lifecycle_pid
+  local release_retry
+  local release_setup
+  local retry_pid
+  local setup_pid
+  local started_retry
+  local started_setup
+
+  create_mcp_fixture test_dir
+  create_fake_node "${test_dir}/bin"
+  mkdir -p "${test_dir}/home/.docker" "${test_dir}/home/bin"
+  printf '{}\n' > "${test_dir}/home/.docker/config.json"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${test_dir}/home/bin/user-mcp-server"
+  chmod +x "${test_dir}/home/bin/user-mcp-server"
+  printf '{"mcpServers":{"github":{"command":"user-github-server"}}}\n' \
+    > "${test_dir}/home/.qoder.json"
+
+  started_setup="${test_dir}/started-setup"
+  release_setup="${test_dir}/release-setup"
+  started_retry="${test_dir}/started-after-setup"
+  release_retry="${test_dir}/release-retry-after-setup"
+  touch "${release_retry}"
+
+  FAKE_DOCKER_STARTED="${started_setup}" \
+    FAKE_DOCKER_RELEASE="${release_setup}" \
+    run_locked_lifecycle \
+      "${test_dir}" "orphaned-setup" "${test_dir}/unused-node-start" "${test_dir}/unused-node-release" \
+      > "${test_dir}/run-orphaned-setup.log" 2>&1 &
+  lifecycle_job_pid=$!
+  if ! wait_for_file "${started_setup}"; then
+    wait "${lifecycle_job_pid}" || true
+    fail "GitHub MCP setup did not reach the blocking Docker pull"
+  fi
+
+  read -r lifecycle_pid setup_pid < "${started_setup}"
+  kill -KILL "${lifecycle_pid}"
+  wait "${lifecycle_job_pid}" 2>/dev/null || true
+
+  run_locked_lifecycle \
+    "${test_dir}" "after-orphaned-setup" "${started_retry}" "${release_retry}" \
+    "0" "false" "user-github-server" \
+    > "${test_dir}/run-after-orphaned-setup.log" 2>&1 &
+  retry_pid=$!
+  sleep 0.5
+  if [[ -e "${started_retry}" ]]; then
+    touch "${release_setup}"
+    wait "${retry_pid}" || true
+    wait_for_process_exit "${setup_pid}" || true
+    fail "a new lifecycle started while an orphaned setup still owned configuration work"
+  fi
+
+  touch "${release_setup}"
+  wait "${retry_pid}"
+  if [[ ! -e "${started_retry}" ]]; then
+    fail "the waiting lifecycle did not start after orphaned setup released the lock"
+  fi
+
+  rm -rf "${test_dir}"
+}
+
 test_recovery_preserves_new_user_github() {
   local test_dir
   local actual
@@ -926,13 +1102,16 @@ run_test "invalid enable input fails" test_invalid_input_fails
 run_test "setup replaces legacy server with official server" test_setup_replaces_legacy_with_official_server
 run_test "Docker pull failure only leaves permanent legacy migration" test_docker_pull_failure_is_atomic
 run_test "legacy setup script delegates to official setup" test_legacy_script_delegates_to_official_setup
+run_test "legacy setup preserves an existing GitHub MCP server" test_legacy_setup_preserves_existing_github
 run_test "legacy token crosses steps without entering Qoder config" test_legacy_token_is_bridged_at_runtime
 run_test "legacy config is removed even without official setup" test_legacy_config_is_removed_without_official_setup
+run_test "lifecycle preserves a symlinked Qoder configuration" test_lifecycle_preserves_symlinked_config
 run_test "qoder wrapper forwards the lock lease" test_qoder_wrapper_forwards_lock_lease
 run_test "concurrent runs serialize the shared Qoder configuration" test_concurrent_runs_serialize_shared_home
 run_test "disabled runs wait for enabled configuration restore" test_disabled_run_waits_for_enabled_restore
 run_test "disabled runs migrate legacy config before qodercli" test_disabled_run_migrates_legacy_before_qodercli
 run_test "next run recovers configuration after SIGKILL" test_next_run_recovers_after_sigkill
+run_test "next run waits for orphaned setup" test_next_run_waits_for_orphaned_setup
 run_test "recovery preserves a new user GitHub MCP entry" test_recovery_preserves_new_user_github
 run_test "failed setup consumes a prepared journal" test_failed_setup_consumes_prepared_journal
 run_test "invalid recovery journal is retained" test_invalid_recovery_journal_is_retained

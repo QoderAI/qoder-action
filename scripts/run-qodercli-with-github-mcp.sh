@@ -54,7 +54,7 @@ restore_configuration() {
 
   if [[ "${BACKUP_READY}" == "true" ]]; then
     GITHUB_MCP_BACKUP_FILE="${BACKUP_FILE}" \
-      bash "${SCRIPT_DIR}/cleanup-github-mcp.sh" 9>&-
+      bash "${SCRIPT_DIR}/cleanup-github-mcp.sh"
     cleanup_status=$?
   fi
 
@@ -94,11 +94,11 @@ fi
 if [[ -f "${BACKUP_FILE}" ]]; then
   echo "::warning::Recovering GitHub MCP configuration from an interrupted previous run."
   GITHUB_MCP_BACKUP_FILE="${BACKUP_FILE}" \
-    bash "${SCRIPT_DIR}/cleanup-github-mcp.sh" 9>&-
+    bash "${SCRIPT_DIR}/cleanup-github-mcp.sh"
   echo "✓ Interrupted GitHub MCP configuration restored"
 fi
 
-bash "${SCRIPT_DIR}/remove-legacy-github-mcp.sh" 9>&-
+bash "${SCRIPT_DIR}/remove-legacy-github-mcp.sh"
 
 if [[ "${ENABLE_GITHUB_MCP}" == "false" ]]; then
   run_qodercli_holding_lock
@@ -143,5 +143,6 @@ mv "${BACKUP_TEMP_FILE}" "${BACKUP_FILE}"
 BACKUP_TEMP_FILE=""
 BACKUP_READY="true"
 
-bash "${SCRIPT_DIR}/setup-github-mcp.sh" 9>&-
+QODER_ACTION_ALLOW_GITHUB_MCP_REPLACE="true" \
+  bash "${SCRIPT_DIR}/setup-github-mcp.sh"
 run_qodercli_holding_lock

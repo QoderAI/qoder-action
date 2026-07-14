@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091 # Resolved relative to this script at runtime.
+source "${SCRIPT_DIR}/github-mcp-common.sh"
+
 : "${GITHUB_MCP_BACKUP_FILE:?GITHUB_MCP_BACKUP_FILE is required}"
 : "${HOME:?HOME is required}"
 
@@ -75,7 +79,8 @@ case "${CURRENT_STATE}" in
     ;;
 esac
 
-TMP_CONFIG="$(mktemp "${HOME}/.qoder.json.tmp.XXXXXX")"
+CONFIG_WRITE_TARGET="$(qoder_config_write_target "${CONFIG_FILE}")"
+TMP_CONFIG="$(qoder_config_temp_file "${CONFIG_WRITE_TARGET}")"
 trap 'rm -f "${TMP_CONFIG}"' EXIT
 
 jq --slurpfile backup "${GITHUB_MCP_BACKUP_FILE}" '
@@ -101,9 +106,9 @@ jq --slurpfile backup "${GITHUB_MCP_BACKUP_FILE}" '
 if jq -e --slurpfile backup "${GITHUB_MCP_BACKUP_FILE}" \
   '($backup[0].had_config | not) and (length == 0)' \
   "${TMP_CONFIG}" >/dev/null; then
-  rm -f "${CONFIG_FILE}" "${TMP_CONFIG}"
+  rm -f "${CONFIG_WRITE_TARGET}" "${TMP_CONFIG}"
 else
-  mv "${TMP_CONFIG}" "${CONFIG_FILE}"
+  mv "${TMP_CONFIG}" "${CONFIG_WRITE_TARGET}"
 fi
 
 rm -f "${GITHUB_MCP_BACKUP_FILE}"

@@ -13,6 +13,15 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
+CONFIG_FILE="${HOME}/.qoder.json"
+mkdir -p "${HOME}"
+if [[ "${QODER_ACTION_ALLOW_GITHUB_MCP_REPLACE:-false}" != "true" \
+  && -f "${CONFIG_FILE}" ]] \
+  && jq -e '(.mcpServers // {}) | has("github")' "${CONFIG_FILE}" >/dev/null; then
+  echo "::error::A GitHub MCP server is already configured at ${CONFIG_FILE}; refusing to replace it outside the locked action lifecycle." >&2
+  exit 1
+fi
+
 if ! command -v docker >/dev/null 2>&1; then
   echo "::error::Docker is required to run the official GitHub MCP Server." >&2
   exit 1
@@ -34,18 +43,20 @@ if ! docker pull "${IMAGE}"; then
 fi
 echo "::endgroup::"
 
-CONFIG_FILE="${HOME}/.qoder.json"
-mkdir -p "${HOME}"
-TMP_CONFIG="$(mktemp "${HOME}/.qoder.json.tmp.XXXXXX")"
+CONFIG_WRITE_TARGET="$(qoder_config_write_target "${CONFIG_FILE}")"
+TMP_CONFIG="$(qoder_config_temp_file "${CONFIG_WRITE_TARGET}")"
 trap 'rm -f "${TMP_CONFIG}"' EXIT
-if [[ ! -f "${CONFIG_FILE}" ]]; then
-  echo "{}" > "${CONFIG_FILE}"
+
+if [[ -f "${CONFIG_FILE}" ]]; then
+  jq --argjson github_mcp_entry "${GITHUB_MCP_ENTRY}" '
+    if .mcpServers == null then .mcpServers = {} else . end
+    | .mcpServers.github = $github_mcp_entry
+  ' "${CONFIG_FILE}" > "${TMP_CONFIG}"
+else
+  jq -n --argjson github_mcp_entry "${GITHUB_MCP_ENTRY}" '{
+    "mcpServers": {"github": $github_mcp_entry}
+  }' > "${TMP_CONFIG}"
 fi
 
-jq --argjson github_mcp_entry "${GITHUB_MCP_ENTRY}" '
-  if .mcpServers == null then .mcpServers = {} else . end
-  | .mcpServers.github = $github_mcp_entry
-' "${CONFIG_FILE}" > "${TMP_CONFIG}"
-
-mv "${TMP_CONFIG}" "${CONFIG_FILE}"
+mv "${TMP_CONFIG}" "${CONFIG_WRITE_TARGET}"
 echo "✓ Official GitHub MCP Server configured at ${CONFIG_FILE}"

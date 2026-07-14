@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091 # Resolved relative to this script at runtime.
+source "${SCRIPT_DIR}/github-mcp-common.sh"
+
 CONFIG_FILE="${HOME}/.qoder.json"
 if [[ ! -f "${CONFIG_FILE}" ]]; then
   exit 0
@@ -23,9 +27,10 @@ if ! jq -e '(.mcpServers // {}) | has("qoder_github")' \
   exit 0
 fi
 
-TMP_CONFIG="$(mktemp "${HOME}/.qoder.json.tmp.XXXXXX")"
+CONFIG_WRITE_TARGET="$(qoder_config_write_target "${CONFIG_FILE}")"
+TMP_CONFIG="$(qoder_config_temp_file "${CONFIG_WRITE_TARGET}")"
 trap 'rm -f "${TMP_CONFIG}"' EXIT
 
 jq 'del(.mcpServers.qoder_github)' "${CONFIG_FILE}" > "${TMP_CONFIG}"
-mv "${TMP_CONFIG}" "${CONFIG_FILE}"
+mv "${TMP_CONFIG}" "${CONFIG_WRITE_TARGET}"
 echo "✓ Legacy qoder_github MCP configuration removed"

@@ -20,3 +20,38 @@ github_mcp_server_entry() {
     "type": "stdio"
   }'
 }
+
+qoder_config_write_target() {
+  local path="$1"
+  local link_target
+  local parent_dir
+  local depth=0
+
+  while [[ -L "${path}" ]]; do
+    if [[ "${depth}" -ge 40 ]]; then
+      echo "::error::Refusing to resolve a Qoder configuration symlink chain deeper than 40 links: $1" >&2
+      return 1
+    fi
+
+    link_target="$(readlink "${path}")"
+    if [[ "${link_target}" == /* ]]; then
+      path="${link_target}"
+    else
+      parent_dir="$(cd -P "$(dirname "${path}")" && pwd)"
+      path="${parent_dir}/${link_target}"
+    fi
+    depth=$((depth + 1))
+  done
+
+  if ! parent_dir="$(cd -P "$(dirname "${path}")" && pwd)"; then
+    echo "::error::Qoder configuration target directory does not exist: $(dirname "${path}")" >&2
+    return 1
+  fi
+  printf '%s/%s\n' "${parent_dir}" "$(basename "${path}")"
+}
+
+qoder_config_temp_file() {
+  local write_target="$1"
+
+  mktemp "$(dirname "${write_target}")/.$(basename "${write_target}").tmp.XXXXXX"
+}
