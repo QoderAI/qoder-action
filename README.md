@@ -5,7 +5,7 @@ Turn your GitHub repository into an intelligent workspace with **Qoder**. This a
 ## Features
 
 - **🤖 Intelligent Code Reviews**: Automatically analyze Pull Requests for bugs, security vulnerabilities, and code style issues before they merge.
-- **💬 Interactive Development**: Collaborate with `@qoder` directly in Issues and Pull Requests to explain code, refactor logic, or generate tests via chat.
+- **💬 Interactive Development**: Collaborate with `@qoderai` directly in Issues and Pull Requests to explain code, refactor logic, or generate tests via chat.
 - **🧠 Context-Aware**: Inject project-specific knowledge (architecture, conventions) simply by adding an `Agents.md` file to your repository.
 - **🐙 Official GitHub Tools**: Uses GitHub's official MCP Server for repository, Issue, and Pull Request operations.
 - **🧩 Highly Extensible**: Define custom **Subagents** and **Slash Commands** to create tailored workflows that match your team's unique processes.
@@ -39,14 +39,14 @@ Browse the [`examples/`](./examples/) directory to choose a workflow that fits y
 | Workflow | Description | Source |
 | :--- | :--- | :--- |
 | **Code Review** | Automatically analyzes Pull Requests for code quality and security. | [`code-review.yml`](./examples/code-review.yml) |
-| **Assistant** | Enables interactive chat (`@qoder`) in Issues and PRs to explain code or fix bugs. | [`assistant.yml`](./examples/assistant.yml) |
+| **Assistant** | Enables interactive chat (`@qoderai`) in Issues and PRs to explain code or fix bugs. | [`assistant.yml`](./examples/assistant.yml) |
 
 > **Note**: These examples are just the beginning. You can craft powerful, custom workflows by combining Qoder's capabilities with your own logic. Contributions of new workflow examples are welcome!
 
 ### 4. Try it out!
 
 - **Code Review**: Open a new Pull Request and wait for Qoder's feedback.
-- **Assistant**: Comment `@qoder Explain this code` or `@qoder Fix this bug` on any Issue or PR.
+- **Assistant**: Start a comment with `@qoderai Explain this code` or `@qoderai Fix this bug` on any Issue or PR.
 
 ## Configuration Reference
 

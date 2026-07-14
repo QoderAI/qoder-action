@@ -146,7 +146,10 @@ on:
 jobs:
   qoder-assistant:
     if: |
-      contains(github.event.comment.body, '@qoder') && 
+      (
+        github.event.comment.body == '@qoderai' ||
+        startsWith(github.event.comment.body, '@qoderai ')
+      ) &&
       !endsWith(github.event.comment.user.login, '[bot]')
     runs-on: ubuntu-latest
     permissions:

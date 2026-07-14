@@ -28,6 +28,7 @@ jobs:
         run: |
           bash tests/github-mcp-scripts.test.sh
           ruby tests/action-metadata.test.rb
+          ruby tests/assistant-trigger.test.rb
           ruby tests/qoder-resources.test.rb
 
       - name: Smoke test official GitHub MCP Server image
