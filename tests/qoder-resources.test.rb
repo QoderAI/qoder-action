@@ -47,6 +47,12 @@ end
 unless review.include?("reuse the existing pending review")
   fail_test("review command does not recover an existing pending review")
 end
+unless review.include?("omit `event`, `body`, and `commitID`")
+  fail_test("review command does not prevent create from submitting the pending review")
+end
+unless review.include?("only review call that may include `event`")
+  fail_test("review command does not reserve event for pending review submission")
+end
 
 %w[code-analyzer.md test-analyzer.md].each do |agent_name|
   agent = RESOURCE_CONTENT.fetch(File.join(ROOT, ".qoder", "agents", agent_name))

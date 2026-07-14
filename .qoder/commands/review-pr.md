@@ -48,14 +48,14 @@ Context Info: $ARGUMENTS
    - Use Grep/Read to trace function calls and understand the broader impact.
    - Form your own opinion on the implementation strategy.
 4. **Drafting the Review**:
-   - **Pending Review**: Call `mcp__github__pull_request_review_write` with method `create` before adding inline comments. If GitHub reports that the requester already has a pending review, reuse the existing pending review and continue; do not issue a second create or delete the draft. Stop on any other create error.
+   - **Pending Review**: Call `mcp__github__pull_request_review_write` with method `create` before adding inline comments. The `create` call must contain only `method`, `owner`, `repo`, and `pullNumber`; omit `event`, `body`, and `commitID`. Supplying `event` makes the official server submit the review immediately instead of creating a pending review. If GitHub reports that the requester already has a pending review, reuse the existing pending review and continue; do not issue a second create or delete the draft. Stop on any other create error.
    - **Inline Comments**: Call `mcp__github__add_comment_to_pending_review` for specific, actionable code issues.
      - **Defects Only**: Only post inline comments for **logic bugs, security risks, or severe performance issues**.
      - **No Test Nags**: Do NOT post inline comments just to say "Add tests here". Test coverage gaps belong in the `Verification Advice` section of the main Summary.
      - **Quote Context**: Always reference specific variable names, function calls, or logic snippets in your text.
      - **No Markdown Headers**: Use plain text paragraphs only.
      - **One Comment Per Block**: Combine all observations for a block into one cohesive narrative.
-   - **The Summary**: This is where you speak to the author. Call `mcp__github__pull_request_review_write` with method `submit_pending`, event `COMMENT`, and the summary as `body`.
+   - **The Summary**: This is where you speak to the author. Call `mcp__github__pull_request_review_write` with method `submit_pending`, event `COMMENT`, and the summary as `body`. This is the only review call that may include `event` or the final summary body.
    
    **Summary Template**:
    ```
