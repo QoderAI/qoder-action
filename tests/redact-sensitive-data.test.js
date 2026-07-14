@@ -20,6 +20,8 @@ const secrets = [
   'WRAPPED_CLIENT_SECRET',
   'PIPE_REFRESH_TOKEN',
   'SHELL_HEADER_KEY',
+  'OPAQUE_VALUE',
+  'SPACED_TOKEN',
   'query-signature',
 ];
 const input = [
@@ -33,6 +35,8 @@ const input = [
   'OAuthError(client_secret=WRAPPED_CLIENT_SECRET)',
   'details|refresh_token=PIPE_REFRESH_TOKEN;',
   "curl -H 'X-API-Key: SHELL_HEADER_KEY'",
+  'token=OPAQUE_VALUE|status=denied',
+  'Error: token=SPACED_TOKEN Resource not accessible by integration',
   'https://example.test/file?x-amz-signature=query-signature&status=denied',
 ].join(' ');
 
@@ -42,6 +46,9 @@ for (const secret of secrets) {
 }
 assert.ok(redacted.includes('status=denied'));
 assert.ok(redacted.includes("curl -H 'X-API-Key: ******'"));
+assert.ok(redacted.includes('OAuthError(client_secret=******)'));
+assert.ok(redacted.includes('token=******|status=denied'));
+assert.ok(redacted.includes('Resource not accessible by integration'));
 assert.ok(redacted.includes('******'));
 
 assert.deepStrictEqual(

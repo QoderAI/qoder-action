@@ -47,7 +47,10 @@ function findClosingQuote(value, index, quote) {
 
 function findUnquotedValueEnd(value, index) {
   let cursor = index;
-  while (cursor < value.length && !['\r', '\n', ',', ';', '}', '&', '"', "'"].includes(value[cursor])) {
+  const structuralDelimiters = [',', ';', '}', '&', '"', "'", ')', ']', '|'];
+  while (cursor < value.length
+    && !/\s/u.test(value[cursor])
+    && !structuralDelimiters.includes(value[cursor])) {
     cursor += 1;
   }
   return cursor;
