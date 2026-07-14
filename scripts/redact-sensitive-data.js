@@ -121,7 +121,7 @@ function maskSensitiveAssignments(value) {
 
 function maskSensitiveString(value) {
   const obviousCredentialsMasked = value
-    .replace(/(\b(?:bearer|basic)\s+)[^\s"',;}]+/gi, '$1******')
+    .replace(/(\b(?:bearer|basic|token)\s+)[^\s"',;}]+/gi, '$1******')
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, '******')
     .replace(
       /([?&](?:signature|sig|x-amz-signature|x-amz-credential)=)[^&#\s]+/gi,

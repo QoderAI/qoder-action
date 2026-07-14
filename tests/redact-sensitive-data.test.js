@@ -8,6 +8,7 @@ const {
 
 const secrets = [
   'raw-bearer-token',
+  'opaque-authorization-token',
   'jwt.payload.signature',
   'quoted-api-key',
   'oauth-client-secret',
@@ -26,6 +27,7 @@ const secrets = [
 ];
 const input = [
   'Authorization: Bearer raw-bearer-token;',
+  'Authorization: Token opaque-authorization-token;',
   'headers={"Authorization":"Bearer jwt.payload.signature","api_key":"quoted-api-key",',
   '"client_secret":"oauth-client-secret","refresh_token":"oauth-refresh-token",',
   '"privateKey":"pem-private-key","password":"abc\\"VISIBLE_SECRET"};',
