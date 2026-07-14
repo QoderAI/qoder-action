@@ -635,7 +635,7 @@ test_qoder_wrapper_prints_tool_errors_in_debug_logs() {
 set -euo pipefail
 
 cat <<'JSONL'
-{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"Error: failed to add reply: Authorization: Bearer ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789; headers={\"Authorization\":\"Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature\",\"api_key\":\"sk-custom-secret\",\"client_secret\":\"oauth-client-secret\",\"refresh_token\":\"oauth-refresh-token\",\"privateKey\":\"pem-private-key\"}; https://example.test/callback?token=super-secret-value&status=denied","is_error":true}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"Error: failed to add reply: Authorization: Bearer ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789; headers={\"Authorization\":\"Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature\",\"api_key\":\"sk-custom-secret\",\"client_secret\":\"oauth-client-secret\",\"refresh_token\":\"oauth-refresh-token\",\"privateKey\":\"pem-private-key\",\"password\":\"abc\\\"VISIBLE_SECRET\"}; https://example.test/callback?token=super-secret-value&status=denied","is_error":true}]}}
 {"type":"user","subtype":"message","message":{"role":"user","content":[{"type":"function_result","function_id":"function-1","content":"Error: legacy function result"}]}}
 JSONL
 EOF
@@ -679,6 +679,9 @@ EOF
   fi
   if grep -q 'pem-private-key' "${test_dir}/wrapper.log"; then
     fail "qoder wrapper should redact JSON-formatted private keys from debug logs"
+  fi
+  if grep -q 'VISIBLE_SECRET' "${test_dir}/wrapper.log"; then
+    fail "qoder wrapper should redact quoted secrets containing escaped quotes"
   fi
   if ! grep -q "legacy function result" "${test_dir}/wrapper.log"; then
     fail "qoder wrapper should print legacy function result errors in debug logs"

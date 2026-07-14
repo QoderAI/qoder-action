@@ -41,7 +41,7 @@ function printGroupEnd() {
 function maskSensitiveString(value) {
   return value
     .replace(
-      /(^|[{\s,;])(["'])([^"']+)\2(\s*[:=]\s*)(["'])(.*?)\5/gim,
+      /(^|[{\s,;])(["'])([^"']+)\2(\s*[:=]\s*)(["'])((?:\\.|(?!\5)[\s\S])*)\5/gim,
       (match, prefix, keyQuote, key, separator, valueQuote) => {
         if (!isSensitiveKey(key)) return match;
         return `${prefix}${keyQuote}${key}${keyQuote}${separator}${valueQuote}******${valueQuote}`;
