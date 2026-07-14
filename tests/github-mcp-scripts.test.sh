@@ -623,6 +623,49 @@ EOF
   rm -rf "${test_dir}"
 }
 
+test_qoder_wrapper_prints_tool_errors_in_debug_logs() {
+  local test_dir
+  local output_file
+  local error_file
+
+  test_dir="$(mktemp -d)"
+  mkdir -p "${test_dir}/bin"
+  cat > "${test_dir}/bin/qodercli" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+cat <<'JSONL'
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"Error: failed to add reply to pull request comment: Resource not accessible by integration","is_error":true}]}}
+{"type":"user","subtype":"message","message":{"role":"user","content":[{"type":"function_result","function_id":"function-1","content":"Error: legacy function result"}]}}
+JSONL
+EOF
+  chmod +x "${test_dir}/bin/qodercli"
+
+  PATH="${test_dir}/bin:${PATH}" \
+    ACTIONS_STEP_DEBUG="true" \
+    GITHUB_WORKSPACE="${ROOT_DIR}" \
+    GITHUB_OUTPUT="${test_dir}/github-output" \
+    INPUT_PROMPT="" \
+    INPUT_FLAGS="" \
+    node "${ROOT_DIR}/scripts/qoder-wrapper.js" \
+    > "${test_dir}/wrapper.log" 2>&1
+
+  if ! grep -q "Tool Result" "${test_dir}/wrapper.log"; then
+    fail "qoder wrapper should identify tool results in debug logs"
+  fi
+  if ! grep -q "Resource not accessible by integration" "${test_dir}/wrapper.log"; then
+    fail "qoder wrapper should print current tool result errors in debug logs"
+  fi
+  if ! grep -q "legacy function result" "${test_dir}/wrapper.log"; then
+    fail "qoder wrapper should print legacy function result errors in debug logs"
+  fi
+
+  output_file="$(sed -n 's/^output_file=//p' "${test_dir}/github-output")"
+  error_file="${output_file/qoder-output-/qoder-error-}"
+  rm -f "${output_file}" "${error_file}"
+  rm -rf "${test_dir}"
+}
+
 test_disabled_run_without_flock_stays_compatible() {
   local test_dir
 
@@ -1488,6 +1531,7 @@ run_test "runtime prefers the private action token" test_runtime_prefers_private
 run_test "legacy config is removed even without official setup" test_legacy_config_is_removed_without_official_setup
 run_test "lifecycle preserves a symlinked Qoder configuration" test_lifecycle_preserves_symlinked_config
 run_test "qoder wrapper forwards the lock lease" test_qoder_wrapper_forwards_lock_lease
+run_test "qoder wrapper prints debug tool errors" test_qoder_wrapper_prints_tool_errors_in_debug_logs
 run_test "disabled runs remain compatible without flock" test_disabled_run_without_flock_stays_compatible
 run_test "lifecycle rejects a FIFO lock path" test_lifecycle_rejects_fifo_lock_path
 run_test "lock validator rejects a replaced pathname" test_lock_validator_rejects_replaced_path

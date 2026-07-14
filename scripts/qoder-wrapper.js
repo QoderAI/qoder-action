@@ -135,6 +135,18 @@ const processedToolIds = new Set();
 let sessionIdPrinted = false;
 let capturedSessionId = null;
 
+function isToolResultError(part) {
+  if (!part || (part.type !== 'tool_result' && part.type !== 'function_result')) {
+    return false;
+  }
+
+  if (part.is_error === true || part.isError === true) {
+    return true;
+  }
+
+  return typeof part.content === 'string' && /^\s*Error(?:\s|:)/i.test(part.content);
+}
+
 rlOut.on('line', (line) => {
   outputStream.write(line + '\n');
 
@@ -149,6 +161,19 @@ rlOut.on('line', (line) => {
         process.stdout.write(`${COLORS.BOLD}Session ID:${COLORS.RESET} ${data.session_id}\n`);
         sessionIdPrinted = true;
       }
+    }
+
+    if (process.env.ACTIONS_STEP_DEBUG === 'true'
+      && data.message
+      && Array.isArray(data.message.content)) {
+      data.message.content.forEach(part => {
+        if (!isToolResultError(part)) return;
+
+        const maskedResult = maskSensitiveData(part);
+        printGroupStart(`${COLORS.CYAN}[Tool Result Error]${COLORS.RESET}`);
+        process.stdout.write(`${JSON.stringify(maskedResult, null, 2)}\n`);
+        printGroupEnd();
+      });
     }
     
     // Stream Content
