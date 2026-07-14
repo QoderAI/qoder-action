@@ -2,6 +2,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const readline = require('readline');
 const path = require('path');
+const { maskSensitiveData } = require('./redact-sensitive-data');
 
 // ANSI colors
 const COLORS = {
@@ -11,24 +12,6 @@ const COLORS = {
   BOLD: '\x1b[1m'
 };
 
-const SENSITIVE_KEY_PARTS = [
-  'token',
-  'password',
-  'secret',
-  'key',
-  'authorization',
-  'auth',
-  'credential',
-  'private',
-  'cert',
-  'access_key',
-];
-
-function isSensitiveKey(key) {
-  const normalizedKey = String(key).toLowerCase();
-  return SENSITIVE_KEY_PARTS.some(part => normalizedKey.includes(part));
-}
-
 // Helper functions for GitHub Actions logging
 function printGroupStart(title) {
   process.stdout.write(`::group::${title}\n`);
@@ -36,50 +19,6 @@ function printGroupStart(title) {
 
 function printGroupEnd() {
   process.stdout.write(`::endgroup::\n`);
-}
-
-function maskSensitiveString(value) {
-  return value
-    .replace(
-      /(^|[{\s,;])(["'])([^"']+)\2(\s*[:=]\s*)(["'])((?:\\.|(?!\5)[\s\S])*)\5/gim,
-      (match, prefix, keyQuote, key, separator, valueQuote) => {
-        if (!isSensitiveKey(key)) return match;
-        return `${prefix}${keyQuote}${key}${keyQuote}${separator}${valueQuote}******${valueQuote}`;
-      },
-    )
-    .replace(/(\b(?:bearer|basic)\s+)[^\s"',;}]+/gi, '$1******')
-    .replace(
-      /(\b(?:authorization|x-qoder-personal-access-token)\s*:\s*(?:(?:bearer|basic|token)\s+)?)[^\s,;]+/gi,
-      '$1******',
-    )
-    .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, '******')
-    .replace(
-      /([?&](?:access_token|token|client_secret|signature|sig|x-amz-signature|x-amz-credential)=)[^&#\s]+/gi,
-      '$1******',
-    )
-    .replace(
-      /(\b(?:password|secret|api[_-]?key|access[_-]?token)\s*[:=]\s*)[^\s,;]+/gi,
-      '$1******',
-    );
-}
-
-function maskSensitiveData(obj) {
-  if (typeof obj === 'string') return maskSensitiveString(obj);
-  if (!obj || typeof obj !== 'object') return obj;
-  
-  const maskedObj = Array.isArray(obj) ? [...obj] : { ...obj };
-
-  for (const key in maskedObj) {
-    if (Object.prototype.hasOwnProperty.call(maskedObj, key)) {
-      // Check if key contains sensitive words
-      if (isSensitiveKey(key)) {
-        maskedObj[key] = '******';
-      } else {
-        maskedObj[key] = maskSensitiveData(maskedObj[key]);
-      }
-    }
-  }
-  return maskedObj;
 }
 
 // --- 1. Environment & Arguments Preparation ---
