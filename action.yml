@@ -10,6 +10,11 @@ inputs:
   prompt:
     description: 'Instructions for qodercli (passed to -p flag)'
     required: true
+
+  trigger_phrase:
+    description: 'For Issue and PR comment events, require this exact trigger phrase before running qodercli. Leave empty to disable trigger detection.'
+    required: false
+    default: ''
   
   flags:
     description: |
@@ -38,6 +43,10 @@ inputs:
     default: ''
 
 outputs:
+  triggered:
+    description: 'Whether the event passed trigger phrase detection.'
+    value: ${{ steps.detect_trigger.outputs.triggered }}
+
   output_file:
     description: 'Path to the file containing qodercli stdout output (formatted as stream-json).'
     value: ${{ steps.run_cli.outputs.output_file }}
@@ -49,7 +58,18 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    - name: Detect comment trigger
+      id: detect_trigger
+      shell: bash
+      env:
+        INPUT_TRIGGER_PHRASE: ${{ inputs.trigger_phrase }}
+        GITHUB_EVENT_NAME: ${{ github.event_name }}
+        GITHUB_EVENT_PATH: ${{ github.event_path }}
+      run: |
+        node "${GITHUB_ACTION_PATH}/scripts/detect-trigger.js"
+
     - name: Install qodercli
+      if: steps.detect_trigger.outputs.triggered == 'true'
       shell: bash
       env:
         QODERCLI_VERSION: ${{ inputs.qodercli_version }}
@@ -63,6 +83,7 @@ runs:
 
     - name: Configure Git Authentication
       id: auth
+      if: steps.detect_trigger.outputs.triggered == 'true'
       shell: bash
       env:
         QODER_PERSONAL_ACCESS_TOKEN: ${{ inputs.qoder_personal_access_token }}
@@ -71,6 +92,7 @@ runs:
 
     - name: Resolve GitHub MCP configuration
       id: resolve_github_mcp
+      if: steps.detect_trigger.outputs.triggered == 'true'
       shell: bash
       env:
         INPUT_ENABLE_GITHUB_MCP: ${{ inputs.enable_github_mcp }}
@@ -80,6 +102,7 @@ runs:
 
     - name: Run qodercli with optional official GitHub MCP Server
       id: run_cli
+      if: steps.detect_trigger.outputs.triggered == 'true'
       shell: bash
       env:
         ENABLE_GITHUB_MCP: ${{ steps.resolve_github_mcp.outputs.enabled }}

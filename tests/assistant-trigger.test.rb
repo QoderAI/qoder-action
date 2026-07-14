@@ -14,20 +14,29 @@ def fail_test(message)
   exit 1
 end
 
-unless WORKFLOW.include?("github.event.comment.body == '@qoderai'") &&
-       WORKFLOW.include?("startsWith(github.event.comment.body, '@qoderai ')")
-  fail_test("Assistant workflow does not require an @qoderai command at the start of the comment")
+unless WORKFLOW.include?("issue_comment:") && WORKFLOW.include?("pull_request_review_comment:")
+  fail_test("Assistant workflow does not subscribe to both Issue/PR conversation and PR inline comments")
 end
 
-if WORKFLOW.include?("contains(github.event.comment.body, '@qoder')")
-  fail_test("Assistant workflow still uses the broad @qoder substring trigger")
+unless WORKFLOW.include?("trigger_phrase: '@qoder'")
+  fail_test("Assistant workflow does not configure the @qoder trigger phrase")
+end
+
+if WORKFLOW.match?(/(?:contains|startsWith)\(github\.event\.comment\.body/)
+  fail_test("Assistant workflow still duplicates trigger detection in the job condition")
 end
 
 stale_mentions = PUBLIC_GUIDANCE.each_with_object([]) do |(path, content), matches|
-  matches << path if content.match?(/@qoder(?!ai|-)/)
+  matches << path if content.include?("@qoderai")
 end
 unless stale_mentions.empty?
-  fail_test("unrelated @qoder account remains in #{stale_mentions.join(', ')}")
+  fail_test("stale @qoderai guidance remains in #{stale_mentions.join(', ')}")
 end
 
-puts "ok - Assistant uses the QoderAI App mention without matching the unrelated @qoder account"
+readme = PUBLIC_GUIDANCE.fetch("README.md")
+unless readme.include?("Issue and PR conversation comments") &&
+       readme.include?("PR inline review comments")
+  fail_test("README does not document Assistant coverage across Issue and PR comment surfaces")
+end
+
+puts "ok - Assistant delegates the @qoder trigger to the action for Issue and PR comments"

@@ -27,6 +27,7 @@ jobs:
       - name: Run deterministic tests
         run: |
           bash tests/github-mcp-scripts.test.sh
+          node --test tests/detect-trigger.test.js
           ruby tests/action-metadata.test.rb
           ruby tests/assistant-trigger.test.rb
           ruby tests/qoder-resources.test.rb
