@@ -37,9 +37,10 @@ create_fake_docker() {
   cat > "${bin_dir}/docker" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf 'token=%s toolsets=%s args=%s\n' \
+printf 'token=%s toolsets=%s tools=%s args=%s\n' \
   "${GITHUB_PERSONAL_ACCESS_TOKEN:-missing}" \
   "${GITHUB_TOOLSETS:-missing}" \
+  "${GITHUB_TOOLS:-missing}" \
   "$*" >> "${FAKE_DOCKER_LOG}"
 if [[ "${FAKE_DOCKER_REQUIRE_CONFIG:-false}" == "true" \
   && ! -f "${HOME}/.docker/config.json" ]]; then
@@ -87,6 +88,15 @@ set -euo pipefail
 
 if [[ "${1:-}" == */validate-lock-file.js ]]; then
   exec "${REAL_NODE_BINARY:?REAL_NODE_BINARY is required}" "$@"
+fi
+
+if [[ -n "${FAKE_EXPECTED_UMASK:-}" \
+  && "$(umask)" != "${FAKE_EXPECTED_UMASK}" ]]; then
+  exit 48
+fi
+if [[ -n "${FAKE_EXPECTED_PERSONAL_ACCESS_TOKEN:-}" \
+  && "${GITHUB_PERSONAL_ACCESS_TOKEN:-}" != "${FAKE_EXPECTED_PERSONAL_ACCESS_TOKEN}" ]]; then
+  exit 49
 fi
 
 actual_github_command="$(jq -r '.mcpServers.github.command // "missing"' "${HOME}/.qoder.json")"
@@ -411,13 +421,56 @@ test_legacy_token_is_bridged_at_runtime() {
 
   runtime_log="$(cat "${test_dir}/docker.log")"
   assert_equals \
-    "token=legacy-token toolsets=context,repos,issues,pull_requests,users args=run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN -e GITHUB_HOST -e GITHUB_TOOLSETS -e GITHUB_TOOLS -e GITHUB_READ_ONLY -e GITHUB_LOCKDOWN_MODE ghcr.io/github/github-mcp-server:v1.5.0@sha256:e25564dccc9110a70a77b9df560cbde11aa392fcb5f08b9abe5c4ebc6d146ea4" \
+    "token=legacy-token toolsets=context,repos,issues,pull_requests,users tools=missing args=run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN -e GITHUB_HOST -e GITHUB_TOOLSETS -e GITHUB_TOOLS -e GITHUB_READ_ONLY -e GITHUB_LOCKDOWN_MODE ghcr.io/github/github-mcp-server:v1.5.0@sha256:e25564dccc9110a70a77b9df560cbde11aa392fcb5f08b9abe5c4ebc6d146ea4" \
     "${runtime_log}" \
     "legacy token runtime bridge and safe default toolsets"
 
   if grep -q "legacy-token" "${test_dir}/home/.qoder.json"; then
     fail "legacy token must not be written to the MCP configuration"
   fi
+
+  rm -rf "${test_dir}"
+}
+
+test_runtime_preserves_tools_only_selection() {
+  local runtime_log
+  local test_dir
+
+  create_mcp_fixture test_dir
+  env -u GITHUB_TOOLSETS \
+    PATH="${test_dir}/bin:${PATH}" \
+    GITHUB_PERSONAL_ACCESS_TOKEN="runtime-token" \
+    GITHUB_TOOLS="get_file_contents" \
+    FAKE_DOCKER_LOG="${test_dir}/docker.log" \
+    bash "${ROOT_DIR}/scripts/run-github-mcp-server.sh" "official-image"
+
+  runtime_log="$(cat "${test_dir}/docker.log")"
+  assert_equals \
+    "token=runtime-token toolsets=missing tools=get_file_contents args=run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN -e GITHUB_HOST -e GITHUB_TOOLSETS -e GITHUB_TOOLS -e GITHUB_READ_ONLY -e GITHUB_LOCKDOWN_MODE official-image" \
+    "${runtime_log}" \
+    "official tools-only selection"
+
+  rm -rf "${test_dir}"
+}
+
+test_runtime_prefers_private_action_token() {
+  local runtime_log
+  local test_dir
+
+  create_mcp_fixture test_dir
+  env -u GITHUB_TOOLSETS -u GITHUB_TOOLS \
+    PATH="${test_dir}/bin:${PATH}" \
+    QODER_ACTION_GITHUB_MCP_TOKEN="action-token" \
+    GITHUB_PERSONAL_ACCESS_TOKEN="user-token" \
+    GITHUB_TOKEN="legacy-token" \
+    FAKE_DOCKER_LOG="${test_dir}/docker.log" \
+    bash "${ROOT_DIR}/scripts/run-github-mcp-server.sh" "official-image"
+
+  runtime_log="$(cat "${test_dir}/docker.log")"
+  assert_equals \
+    "token=action-token toolsets=context,repos,issues,pull_requests,users tools=missing args=run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN -e GITHUB_HOST -e GITHUB_TOOLSETS -e GITHUB_TOOLS -e GITHUB_READ_ONLY -e GITHUB_LOCKDOWN_MODE official-image" \
+    "${runtime_log}" \
+    "private action token precedence"
 
   rm -rf "${test_dir}"
 }
@@ -657,6 +710,34 @@ test_lock_validator_rejects_replaced_path() {
   rm -rf "${test_dir}"
 }
 
+test_lifecycle_preserves_umask_and_user_pat() {
+  local release_file
+  local test_dir
+
+  create_mcp_fixture test_dir
+  create_fake_node "${test_dir}/bin"
+  mkdir -p "${test_dir}/home/bin"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${test_dir}/home/bin/user-mcp-server"
+  chmod +x "${test_dir}/home/bin/user-mcp-server"
+  printf '{"mcpServers":{"github":{"command":"user-github-server"}}}\n' \
+    > "${test_dir}/home/.qoder.json"
+  release_file="${test_dir}/release-umask"
+  touch "${release_file}"
+
+  (
+    umask 0027
+    LIFECYCLE_PERSONAL_ACCESS_TOKEN="user-pat" \
+      FAKE_EXPECTED_UMASK="0027" \
+      FAKE_EXPECTED_PERSONAL_ACCESS_TOKEN="user-pat" \
+      run_locked_lifecycle \
+        "${test_dir}" "umask" "${test_dir}/started-umask" "${release_file}" \
+        "0" "false" "user-github-server" \
+        > "${test_dir}/run-umask.log" 2>&1
+  )
+
+  rm -rf "${test_dir}"
+}
+
 run_locked_lifecycle() {
   local test_dir="$1"
   local run_id="$2"
@@ -665,9 +746,9 @@ run_locked_lifecycle() {
   local node_exit="${5:-0}"
   local enabled="${6:-true}"
   local expected_github_command="${7:-bash}"
-  local personal_access_token=""
+  local personal_access_token="${LIFECYCLE_PERSONAL_ACCESS_TOKEN:-}"
 
-  if [[ "${enabled}" == "true" ]]; then
+  if [[ "${enabled}" == "true" && -z "${personal_access_token}" ]]; then
     personal_access_token="runtime-token"
   fi
 
@@ -688,6 +769,8 @@ run_locked_lifecycle() {
     FAKE_DOCKER_RELEASE="${FAKE_DOCKER_RELEASE:-}" \
     FAKE_EXPECTED_HOME="${test_dir}/home" \
     FAKE_EXPECTED_GITHUB_COMMAND="${expected_github_command}" \
+    FAKE_EXPECTED_UMASK="${FAKE_EXPECTED_UMASK:-}" \
+    FAKE_EXPECTED_PERSONAL_ACCESS_TOKEN="${FAKE_EXPECTED_PERSONAL_ACCESS_TOKEN:-}" \
     REAL_NODE_BINARY="${REAL_NODE_BINARY}" \
     FAKE_NODE_STARTED="${started_file}" \
     FAKE_NODE_RELEASE="${release_file}" \
@@ -1306,12 +1389,15 @@ run_test "Docker pull failure only leaves permanent legacy migration" test_docke
 run_test "legacy setup script delegates to official setup" test_legacy_script_delegates_to_official_setup
 run_test "legacy setup preserves an existing GitHub MCP server" test_legacy_setup_preserves_existing_github
 run_test "legacy token crosses steps without entering Qoder config" test_legacy_token_is_bridged_at_runtime
+run_test "runtime preserves official tools-only selection" test_runtime_preserves_tools_only_selection
+run_test "runtime prefers the private action token" test_runtime_prefers_private_action_token
 run_test "legacy config is removed even without official setup" test_legacy_config_is_removed_without_official_setup
 run_test "lifecycle preserves a symlinked Qoder configuration" test_lifecycle_preserves_symlinked_config
 run_test "qoder wrapper forwards the lock lease" test_qoder_wrapper_forwards_lock_lease
 run_test "disabled runs remain compatible without flock" test_disabled_run_without_flock_stays_compatible
 run_test "lifecycle rejects a FIFO lock path" test_lifecycle_rejects_fifo_lock_path
 run_test "lock validator rejects a replaced pathname" test_lock_validator_rejects_replaced_path
+run_test "lifecycle preserves umask and the caller PAT" test_lifecycle_preserves_umask_and_user_pat
 run_test "concurrent runs serialize the shared Qoder configuration" test_concurrent_runs_serialize_shared_home
 run_test "disabled runs wait for enabled configuration restore" test_disabled_run_waits_for_enabled_restore
 run_test "disabled runs migrate legacy config before qodercli" test_disabled_run_migrates_legacy_before_qodercli

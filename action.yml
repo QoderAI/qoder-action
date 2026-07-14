@@ -85,7 +85,7 @@ runs:
         ENABLE_GITHUB_MCP: ${{ steps.resolve_github_mcp.outputs.enabled }}
         QODER_PERSONAL_ACCESS_TOKEN: ${{ inputs.qoder_personal_access_token }}
         GITHUB_TOKEN: ${{ steps.auth.outputs.github_token }}
-        GITHUB_PERSONAL_ACCESS_TOKEN: ${{ steps.resolve_github_mcp.outputs.enabled == 'true' && steps.auth.outputs.github_token || '' }}
+        QODER_ACTION_GITHUB_MCP_TOKEN: ${{ steps.resolve_github_mcp.outputs.enabled == 'true' && steps.auth.outputs.github_token || '' }}
         GITHUB_HOST: ${{ github.server_url }}
         INPUT_PROMPT: ${{ inputs.prompt }}
         INPUT_FLAGS: ${{ inputs.flags }}

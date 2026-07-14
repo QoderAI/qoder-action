@@ -50,9 +50,14 @@ assert_equal(
   "locked lifecycle enablement"
 )
 assert_equal(
-  "${{ steps.resolve_github_mcp.outputs.enabled == 'true' && steps.auth.outputs.github_token || '' }}",
+  nil,
   run_cli&.dig("env", "GITHUB_PERSONAL_ACCESS_TOKEN"),
-  "runtime-only GitHub MCP token"
+  "disabled lifecycle preserves the caller GitHub personal access token"
+)
+assert_equal(
+  "${{ steps.resolve_github_mcp.outputs.enabled == 'true' && steps.auth.outputs.github_token || '' }}",
+  run_cli&.dig("env", "QODER_ACTION_GITHUB_MCP_TOKEN"),
+  "private runtime-only GitHub MCP token"
 )
 assert_equal(
   "${{ github.server_url }}",

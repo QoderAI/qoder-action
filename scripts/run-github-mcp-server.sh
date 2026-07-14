@@ -7,14 +7,16 @@ if [[ "$#" -ne 1 ]]; then
   exit 1
 fi
 
-token="${GITHUB_PERSONAL_ACCESS_TOKEN:-${GITHUB_TOKEN:-}}"
+token="${QODER_ACTION_GITHUB_MCP_TOKEN:-${GITHUB_PERSONAL_ACCESS_TOKEN:-${GITHUB_TOKEN:-}}}"
 if [[ -z "${token}" ]]; then
   echo "::error::GITHUB_PERSONAL_ACCESS_TOKEN or GITHUB_TOKEN is required to run the GitHub MCP Server." >&2
   exit 1
 fi
 
 export GITHUB_PERSONAL_ACCESS_TOKEN="${token}"
-export GITHUB_TOOLSETS="${GITHUB_TOOLSETS:-context,repos,issues,pull_requests,users}"
+if [[ -z "${GITHUB_TOOLSETS:-}" && -z "${GITHUB_TOOLS:-}" ]]; then
+  export GITHUB_TOOLSETS="context,repos,issues,pull_requests,users"
+fi
 
 exec docker run -i --rm \
   -e GITHUB_PERSONAL_ACCESS_TOKEN \

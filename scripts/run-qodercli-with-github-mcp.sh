@@ -48,8 +48,10 @@ if [[ -L "${LOCK_FILE}" || ( -e "${LOCK_FILE}" && ! -f "${LOCK_FILE}" ) ]]; then
   exit 1
 fi
 
+ORIGINAL_UMASK="$(umask)"
 umask 077
 exec 9>> "${LOCK_FILE}"
+umask "${ORIGINAL_UMASK}"
 if ! node "${LOCK_VALIDATOR}" "${LOCK_FILE}" 9 chmod-600; then
   exec 9>&-
   echo "::error::GitHub MCP lock path changed while it was opened: ${LOCK_FILE}" >&2
