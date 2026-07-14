@@ -11,6 +11,24 @@ const COLORS = {
   BOLD: '\x1b[1m'
 };
 
+const SENSITIVE_KEY_PARTS = [
+  'token',
+  'password',
+  'secret',
+  'key',
+  'authorization',
+  'auth',
+  'credential',
+  'private',
+  'cert',
+  'access_key',
+];
+
+function isSensitiveKey(key) {
+  const normalizedKey = String(key).toLowerCase();
+  return SENSITIVE_KEY_PARTS.some(part => normalizedKey.includes(part));
+}
+
 // Helper functions for GitHub Actions logging
 function printGroupStart(title) {
   process.stdout.write(`::group::${title}\n`);
@@ -23,8 +41,11 @@ function printGroupEnd() {
 function maskSensitiveString(value) {
   return value
     .replace(
-      /((?:^|[{\s,;])["']?(?:authorization|auth|token|password|secret|api[_-]?key|access[_-]?token|credential|private[_-]?key|x-qoder-personal-access-token)["']?\s*[:=]\s*)(["'])(.*?)\2/gim,
-      '$1$2******$2',
+      /(^|[{\s,;])(["'])([^"']+)\2(\s*[:=]\s*)(["'])(.*?)\5/gim,
+      (match, prefix, keyQuote, key, separator, valueQuote) => {
+        if (!isSensitiveKey(key)) return match;
+        return `${prefix}${keyQuote}${key}${keyQuote}${separator}${valueQuote}******${valueQuote}`;
+      },
     )
     .replace(/(\b(?:bearer|basic)\s+)[^\s"',;}]+/gi, '$1******')
     .replace(
@@ -46,14 +67,12 @@ function maskSensitiveData(obj) {
   if (typeof obj === 'string') return maskSensitiveString(obj);
   if (!obj || typeof obj !== 'object') return obj;
   
-  const sensitiveKeys = ['token', 'password', 'secret', 'key', 'authorization', 'auth', 'credential', 'private', 'cert', 'access_key'];
   const maskedObj = Array.isArray(obj) ? [...obj] : { ...obj };
 
   for (const key in maskedObj) {
     if (Object.prototype.hasOwnProperty.call(maskedObj, key)) {
-      const lowerKey = key.toLowerCase();
       // Check if key contains sensitive words
-      if (sensitiveKeys.some(s => lowerKey.includes(s))) {
+      if (isSensitiveKey(key)) {
         maskedObj[key] = '******';
       } else {
         maskedObj[key] = maskSensitiveData(maskedObj[key]);
