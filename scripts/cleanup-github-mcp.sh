@@ -25,6 +25,7 @@ if ! jq -e '
   and (.had_mcp_servers | type == "boolean")
   and (.mcp_servers_was_null | type == "boolean")
   and (.had_github | type == "boolean")
+  and (.config_write_target | type == "string" and startswith("/"))
   and (.temporary_github | type == "object")
 ' "${GITHUB_MCP_BACKUP_FILE}" >/dev/null; then
   echo "::error::GitHub MCP configuration backup is invalid." >&2
@@ -32,8 +33,24 @@ if ! jq -e '
 fi
 
 CONFIG_FILE="${HOME}/.qoder.json"
-CONFIG_WRITE_TARGET="$(qoder_config_write_target "${CONFIG_FILE}")"
-if [[ ! -f "${CONFIG_FILE}" ]]; then
+CONFIG_WRITE_TARGET="$(jq -r '.config_write_target' "${GITHUB_MCP_BACKUP_FILE}")"
+
+configuration_target_matches_journal() {
+  local current_target
+  local saved_target
+
+  if ! current_target="$(qoder_config_write_target "${CONFIG_FILE}")" \
+    || ! saved_target="$(qoder_config_write_target "${CONFIG_WRITE_TARGET}")" \
+    || [[ "${current_target}" != "${CONFIG_WRITE_TARGET}" ]] \
+    || [[ "${saved_target}" != "${CONFIG_WRITE_TARGET}" ]]; then
+    echo "::error::Cannot restore GitHub MCP because the Qoder configuration target changed since this action created its backup journal. Current configuration and backup journal were preserved." >&2
+    return 1
+  fi
+}
+
+configuration_target_matches_journal
+
+if [[ ! -f "${CONFIG_WRITE_TARGET}" ]]; then
   if jq -e '.had_config' "${GITHUB_MCP_BACKUP_FILE}" >/dev/null; then
     echo "::error::Cannot restore GitHub MCP because ${CONFIG_FILE} was removed during the run. Backup retained at ${GITHUB_MCP_BACKUP_FILE}." >&2
     exit 1
@@ -44,7 +61,7 @@ if [[ ! -f "${CONFIG_FILE}" ]]; then
 fi
 
 if ! jq -e 'type == "object" and ((.mcpServers // {}) | type == "object")' \
-  "${CONFIG_FILE}" >/dev/null; then
+  "${CONFIG_WRITE_TARGET}" >/dev/null; then
   echo "::error::${CONFIG_FILE} changed to an invalid shape while GitHub MCP was running." >&2
   exit 1
 fi
@@ -60,10 +77,11 @@ CURRENT_STATE="$(jq -r --slurpfile backup "${GITHUB_MCP_BACKUP_FILE}" '
   else
     "conflict"
   end
-' "${CONFIG_FILE}")"
+' "${CONFIG_WRITE_TARGET}")"
 
 case "${CURRENT_STATE}" in
   original)
+    configuration_target_matches_journal
     rm -f "${GITHUB_MCP_BACKUP_FILE}"
     echo "✓ GitHub MCP configuration already matches the backup journal"
     exit 0
@@ -101,7 +119,9 @@ jq --slurpfile backup "${GITHUB_MCP_BACKUP_FILE}" '
     then del(.mcpServers)
     else .
     end
-' "${CONFIG_FILE}" > "${TMP_CONFIG}"
+' "${CONFIG_WRITE_TARGET}" > "${TMP_CONFIG}"
+
+configuration_target_matches_journal
 
 if jq -e --slurpfile backup "${GITHUB_MCP_BACKUP_FILE}" \
   '($backup[0].had_config | not) and (length == 0)' \

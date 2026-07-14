@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REAL_NODE_BINARY="$(command -v node)"
 TESTS_RUN=0
 
 fail() {
@@ -83,6 +84,10 @@ create_fake_node() {
   cat > "${bin_dir}/node" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+if [[ "${1:-}" == */validate-lock-file.js ]]; then
+  exec "${REAL_NODE_BINARY:?REAL_NODE_BINARY is required}" "$@"
+fi
 
 actual_github_command="$(jq -r '.mcpServers.github.command // "missing"' "${HOME}/.qoder.json")"
 if [[ "${actual_github_command}" != "${FAKE_EXPECTED_GITHUB_COMMAND}" ]]; then
@@ -615,6 +620,43 @@ test_lifecycle_rejects_fifo_lock_path() {
   rm -rf "${test_dir}"
 }
 
+test_lock_validator_rejects_replaced_path() {
+  local lock_file
+  local test_dir
+  local validator="${ROOT_DIR}/scripts/validate-lock-file.js"
+
+  if [[ ! -f "${validator}" ]]; then
+    fail "lock identity validator is missing"
+  fi
+
+  test_dir="$(mktemp -d)"
+  lock_file="${test_dir}/lock"
+  : > "${lock_file}"
+
+  (
+    exec 9>> "${lock_file}"
+    node "${validator}" "${lock_file}" 9 chmod-600
+    rm -f "${lock_file}"
+    : > "${lock_file}"
+    if node "${validator}" "${lock_file}" 9 \
+      2> "${test_dir}/validator-error.log"; then
+      exit 62
+    fi
+  )
+
+  if ! grep -q "no longer identifies file descriptor 9" \
+    "${test_dir}/validator-error.log"; then
+    fail "lock identity validator should explain the replaced pathname"
+  fi
+
+  if ! grep -q "validate-lock-file.js" \
+    "${ROOT_DIR}/scripts/run-qodercli-with-github-mcp.sh"; then
+    fail "locked lifecycle does not use the lock identity validator"
+  fi
+
+  rm -rf "${test_dir}"
+}
+
 run_locked_lifecycle() {
   local test_dir="$1"
   local run_id="$2"
@@ -646,6 +688,7 @@ run_locked_lifecycle() {
     FAKE_DOCKER_RELEASE="${FAKE_DOCKER_RELEASE:-}" \
     FAKE_EXPECTED_HOME="${test_dir}/home" \
     FAKE_EXPECTED_GITHUB_COMMAND="${expected_github_command}" \
+    REAL_NODE_BINARY="${REAL_NODE_BINARY}" \
     FAKE_NODE_STARTED="${started_file}" \
     FAKE_NODE_RELEASE="${release_file}" \
     FAKE_NODE_EXIT="${node_exit}" \
@@ -1058,6 +1101,68 @@ JSON
   rm -rf "${test_dir}"
 }
 
+test_recovery_rejects_retargeted_config_symlink() {
+  local lifecycle_job_pid
+  local lifecycle_pid
+  local release_file
+  local started_file
+  local test_dir
+
+  create_mcp_fixture test_dir
+  create_fake_node "${test_dir}/bin"
+  mkdir -p "${test_dir}/home/.docker" "${test_dir}/home/bin" "${test_dir}/home/dotfiles"
+  printf '{}\n' > "${test_dir}/home/.docker/config.json"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${test_dir}/home/bin/user-mcp-server"
+  chmod +x "${test_dir}/home/bin/user-mcp-server"
+  printf '{"mcpServers":{"github":{"command":"user-github-server"},"a":{"command":"a"}}}\n' \
+    > "${test_dir}/home/dotfiles/a.json"
+  printf '{"mcpServers":{"github":{"command":"user-github-server"},"b":{"command":"b"}}}\n' \
+    > "${test_dir}/home/dotfiles/b.json"
+  ln -s "dotfiles/a.json" "${test_dir}/home/.qoder.json"
+
+  started_file="${test_dir}/started-retarget"
+  release_file="${test_dir}/release-retarget"
+  run_locked_lifecycle \
+    "${test_dir}" "retarget" "${started_file}" "${release_file}" \
+    > "${test_dir}/run-retarget.log" 2>&1 &
+  lifecycle_job_pid=$!
+  if ! wait_for_file "${started_file}"; then
+    wait "${lifecycle_job_pid}" || true
+    fail "lifecycle selected for symlink-retarget recovery did not start"
+  fi
+
+  lifecycle_pid="$(cat "${started_file}")"
+  kill -KILL "${lifecycle_pid}"
+  wait "${lifecycle_job_pid}" 2>/dev/null || true
+  rm -f "${test_dir}/home/.qoder.json"
+  ln -s "dotfiles/b.json" "${test_dir}/home/.qoder.json"
+  touch "${release_file}"
+
+  if run_locked_lifecycle \
+    "${test_dir}" "retarget-recovery" "${test_dir}/unexpected-retarget-start" "${release_file}" \
+    "0" "false" "user-github-server" \
+    > "${test_dir}/run-retarget-recovery.log" 2>&1; then
+    fail "recovery should stop when the Qoder configuration symlink target changes"
+  fi
+
+  if [[ ! -f "${test_dir}/home/.qoder-action-github-mcp-backup.json" ]]; then
+    fail "symlink-retarget conflict should retain the backup journal"
+  fi
+  assert_equals \
+    "bash" \
+    "$(jq -r '.mcpServers.github.command' "${test_dir}/home/dotfiles/a.json")" \
+    "temporary GitHub MCP entry at the original symlink target"
+  assert_equals \
+    "user-github-server" \
+    "$(jq -r '.mcpServers.github.command' "${test_dir}/home/dotfiles/b.json")" \
+    "new symlink target after rejected recovery"
+  if ! grep -q "configuration target changed" "${test_dir}/run-retarget-recovery.log"; then
+    fail "symlink-retarget conflict should explain why recovery stopped"
+  fi
+
+  rm -rf "${test_dir}"
+}
+
 test_failed_setup_consumes_prepared_journal() {
   local test_dir
   local original_before
@@ -1206,12 +1311,14 @@ run_test "lifecycle preserves a symlinked Qoder configuration" test_lifecycle_pr
 run_test "qoder wrapper forwards the lock lease" test_qoder_wrapper_forwards_lock_lease
 run_test "disabled runs remain compatible without flock" test_disabled_run_without_flock_stays_compatible
 run_test "lifecycle rejects a FIFO lock path" test_lifecycle_rejects_fifo_lock_path
+run_test "lock validator rejects a replaced pathname" test_lock_validator_rejects_replaced_path
 run_test "concurrent runs serialize the shared Qoder configuration" test_concurrent_runs_serialize_shared_home
 run_test "disabled runs wait for enabled configuration restore" test_disabled_run_waits_for_enabled_restore
 run_test "disabled runs migrate legacy config before qodercli" test_disabled_run_migrates_legacy_before_qodercli
 run_test "next run recovers configuration after SIGKILL" test_next_run_recovers_after_sigkill
 run_test "next run waits for orphaned setup" test_next_run_waits_for_orphaned_setup
 run_test "recovery preserves a new user GitHub MCP entry" test_recovery_preserves_new_user_github
+run_test "recovery rejects a retargeted configuration symlink" test_recovery_rejects_retargeted_config_symlink
 run_test "failed setup consumes a prepared journal" test_failed_setup_consumes_prepared_journal
 run_test "invalid recovery journal is retained" test_invalid_recovery_journal_is_retained
 run_test "failed runs restore configuration and release the lock" test_failed_run_restores_config_and_releases_lock

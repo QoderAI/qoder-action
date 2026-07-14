@@ -29,6 +29,10 @@ if ! command -v flock >/dev/null 2>&1; then
   echo "::error::flock is required to serialize qodercli on a shared runner HOME." >&2
   exit 1
 fi
+if ! command -v node >/dev/null 2>&1; then
+  echo "::error::node is required to validate the shared GitHub MCP lock file." >&2
+  exit 1
+fi
 
 if [[ "${ENABLE_GITHUB_MCP}" == "true" ]]; then
   if ! command -v jq >/dev/null 2>&1; then
@@ -38,6 +42,7 @@ if [[ "${ENABLE_GITHUB_MCP}" == "true" ]]; then
 fi
 
 LOCK_FILE="${HOME}/.qoder-action-github-mcp.lock"
+LOCK_VALIDATOR="${SCRIPT_DIR}/validate-lock-file.js"
 if [[ -L "${LOCK_FILE}" || ( -e "${LOCK_FILE}" && ! -f "${LOCK_FILE}" ) ]]; then
   echo "::error::GitHub MCP lock path must be a regular file and not a symlink: ${LOCK_FILE}" >&2
   exit 1
@@ -45,12 +50,11 @@ fi
 
 umask 077
 exec 9>> "${LOCK_FILE}"
-if [[ -L "${LOCK_FILE}" || ! -f "${LOCK_FILE}" || ! -f /dev/fd/9 ]]; then
+if ! node "${LOCK_VALIDATOR}" "${LOCK_FILE}" 9 chmod-600; then
   exec 9>&-
   echo "::error::GitHub MCP lock path changed while it was opened: ${LOCK_FILE}" >&2
   exit 1
 fi
-chmod 600 "${LOCK_FILE}"
 
 BACKUP_FILE="${HOME}/.qoder-action-github-mcp-backup.json"
 BACKUP_TEMP_FILE=""
@@ -92,14 +96,14 @@ trap 'exit 143' TERM
 
 echo "Waiting for exclusive access to ${HOME}/.qoder.json..."
 flock 9
-if [[ -L "${LOCK_FILE}" || ! -f "${LOCK_FILE}" ]]; then
+if ! node "${LOCK_VALIDATOR}" "${LOCK_FILE}" 9; then
   echo "::error::GitHub MCP lock path changed while waiting for exclusive access: ${LOCK_FILE}" >&2
   exit 1
 fi
 echo "✓ Exclusive Qoder configuration lock acquired"
 
 CONFIG_FILE="${HOME}/.qoder.json"
-qoder_config_write_target "${CONFIG_FILE}" >/dev/null
+CONFIG_WRITE_TARGET="$(qoder_config_write_target "${CONFIG_FILE}")"
 
 if [[ -L "${BACKUP_FILE}" ]]; then
   echo "::error::Refusing to use a symlink as the GitHub MCP backup journal: ${BACKUP_FILE}" >&2
@@ -138,21 +142,27 @@ if [[ -f "${CONFIG_FILE}" ]]; then
     exit 1
   fi
 
-  jq --argjson temporary_github "${TEMPORARY_GITHUB_ENTRY}" '{
+  jq \
+    --arg config_write_target "${CONFIG_WRITE_TARGET}" \
+    --argjson temporary_github "${TEMPORARY_GITHUB_ENTRY}" '{
     "had_config": true,
     "had_mcp_servers": has("mcpServers"),
     "mcp_servers_was_null": (has("mcpServers") and (.mcpServers == null)),
     "had_github": ((.mcpServers // {}) | has("github")),
     "github": .mcpServers.github,
+    "config_write_target": $config_write_target,
     "temporary_github": $temporary_github
   }' "${CONFIG_FILE}" > "${BACKUP_TEMP_FILE}"
 else
-  jq -n --argjson temporary_github "${TEMPORARY_GITHUB_ENTRY}" '{
+  jq -n \
+    --arg config_write_target "${CONFIG_WRITE_TARGET}" \
+    --argjson temporary_github "${TEMPORARY_GITHUB_ENTRY}" '{
     "had_config": false,
     "had_mcp_servers": false,
     "mcp_servers_was_null": false,
     "had_github": false,
     "github": null,
+    "config_write_target": $config_write_target,
     "temporary_github": $temporary_github
   }' > "${BACKUP_TEMP_FILE}"
 fi
