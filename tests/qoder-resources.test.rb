@@ -35,6 +35,12 @@ end
 if assistant.include?("update the comment")
   fail_test("assistant command still asks to update an already-published comment")
 end
+unless assistant.include?("omit `comment_id` and `reaction`")
+  fail_test("assistant command does not keep body-only comments free of reaction fields")
+end
+unless assistant.include?("rejects `comment_id` combined with `body`")
+  fail_test("assistant command does not explain the official comment parameter conflict")
+end
 
 review = RESOURCE_CONTENT.fetch(File.join(ROOT, ".qoder", "commands", "review-pr.md"))
 %w[

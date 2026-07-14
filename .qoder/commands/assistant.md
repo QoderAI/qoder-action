@@ -49,7 +49,7 @@ The following parameters are provided conditionally based on context:
 - **Output Language**: Follow `OUTPUT_LANGUAGE` or match the user's language.
 - **Final Comment Delivery (MANDATORY)**:
   * Do not post a placeholder comment. The official GitHub MCP Server does not provide a general comment-update tool.
-  * For an Issue or a PR conversation triggered by an Issue comment, post exactly one final response with `mcp__github__add_issue_comment` using `ISSUE_OR_PR_NUMBER`.
+  * For an Issue or a PR conversation triggered by an Issue comment, post exactly one final response with `mcp__github__add_issue_comment` using `ISSUE_OR_PR_NUMBER`. A body-only final comment must pass exactly `owner`, `repo`, `issue_number`, and `body`; omit `comment_id` and `reaction`. The official server rejects `comment_id` combined with `body`, and a final response must not add an unrelated reaction.
   * For a PR review-comment thread, post exactly one final response with `mcp__github__add_reply_to_pull_request_comment`. Use `REPLY_TO_COMMENT_ID` when present; otherwise use `COMMENT_ID` as `commentId`, and always pass `ISSUE_OR_PR_NUMBER` as `pullNumber`.
   * Never attempt to edit the user's triggering comment.
 - **Information Delivery**:
