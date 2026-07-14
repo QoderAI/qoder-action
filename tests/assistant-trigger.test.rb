@@ -1,7 +1,13 @@
 #!/usr/bin/env ruby
 
+require "json"
+require "open3"
+require "tmpdir"
+require "yaml"
+
 ROOT = File.expand_path("..", __dir__)
-WORKFLOW = File.read(File.join(ROOT, "examples", "assistant.yml"))
+WORKFLOW_PATH = File.join(ROOT, "examples", "assistant.yml")
+WORKFLOW = File.read(WORKFLOW_PATH)
 PUBLIC_GUIDANCE = %w[
   README.md
   docs/recipes.md
@@ -26,6 +32,15 @@ if WORKFLOW.match?(/(?:contains|startsWith)\(github\.event\.comment\.body/)
   fail_test("Assistant workflow still duplicates trigger detection in the job condition")
 end
 
+if WORKFLOW.include?("${{ github.event.comment.body }}")
+  fail_test("Assistant workflow interpolates untrusted comment text into shell source")
+end
+unless WORKFLOW.include?('jq -r') &&
+       WORKFLOW.include?('"$GITHUB_EVENT_PATH"') &&
+       WORKFLOW.include?('delimiter="QODER_ARGS_$(uuidgen)"')
+  fail_test("Assistant workflow does not build arguments safely from the event payload")
+end
+
 stale_mentions = PUBLIC_GUIDANCE.each_with_object([]) do |(path, content), matches|
   matches << path if content.include?("@qoderai")
 end
@@ -42,6 +57,46 @@ end
 recipe = PUBLIC_GUIDANCE.fetch("docs/recipes.md")
 unless recipe.include?("pull_request_review_comment:")
   fail_test("Chinese Assistant recipe does not subscribe to PR inline review comments")
+end
+
+Dir.mktmpdir("qoder-assistant-args-") do |dir|
+  event_path = File.join(dir, "event.json")
+  output_path = File.join(dir, "github-output")
+  marker_path = File.join(dir, "injected")
+  comment_body = "@qoder $(touch #{marker_path}) `touch #{marker_path}`"
+  File.write(event_path, JSON.generate({
+    issue: { number: 7 },
+    comment: {
+      node_id: "IC_kwDOExample",
+      id: 42,
+      user: { login: "contributor" },
+      body: comment_body,
+      html_url: "https://example.test/issues/7#issuecomment-42"
+    }
+  }))
+
+  parsed_workflow = YAML.safe_load(WORKFLOW, aliases: true)
+  build_step = parsed_workflow
+    .fetch("jobs")
+    .fetch("qoder-assistant")
+    .fetch("steps")
+    .find { |step| step["id"] == "build_args" }
+  stdout, stderr, status = Open3.capture3(
+    {
+      "GITHUB_EVENT_NAME" => "issue_comment",
+      "GITHUB_EVENT_PATH" => event_path,
+      "GITHUB_OUTPUT" => output_path,
+      "GITHUB_REPOSITORY" => "owner/repo"
+    },
+    "bash",
+    "-c",
+    build_step.fetch("run")
+  )
+  fail_test("Assistant argument builder failed: #{stdout}#{stderr}") unless status.success?
+  fail_test("Assistant argument builder executed comment text") if File.exist?(marker_path)
+  unless File.read(output_path).include?(comment_body)
+    fail_test("Assistant argument builder did not preserve comment text as data")
+  end
 end
 
 puts "ok - Assistant delegates the @qoder trigger to the action for Issue and PR comments"

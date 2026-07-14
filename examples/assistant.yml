@@ -22,32 +22,33 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Build Arguments
+      - name: Build arguments
         id: build_args
         run: |
-          ARGS="REPO: ${{ github.repository }}
-          REQUEST_SOURCE: ${{ github.event_name }}
-          THREAD_ID: ${{ github.event.comment.node_id }}
-          COMMENT_ID: ${{ github.event.comment.id }}
-          AUTHOR: ${{ github.event.comment.user.login }}
-          BODY: ${{ github.event.comment.body }}
-          URL: ${{ github.event.comment.html_url }}
-          IS_PR: ${{ github.event.issue.pull_request != null || github.event_name == 'pull_request_review_comment' }}
-          ISSUE_OR_PR_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}"
-          
-          if [ -n "${{ github.event.comment.pull_request_review_id }}" ]; then
-            ARGS="$ARGS
-          REVIEW_ID: ${{ github.event.comment.pull_request_review_id }}"
-          fi
-          
-          if [ -n "${{ github.event.comment.in_reply_to_id }}" ]; then
-            ARGS="$ARGS
-          REPLY_TO_COMMENT_ID: ${{ github.event.comment.in_reply_to_id }}"
-          fi
-          
-          echo "args<<EOF" >> $GITHUB_OUTPUT
-          echo "$ARGS" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          # Read comment fields from the event payload so user-authored text is not evaluated by the shell.
+          ARGS="$(jq -r --arg repo "$GITHUB_REPOSITORY" --arg event_name "$GITHUB_EVENT_NAME" '
+            [
+              "REPO: \($repo)",
+              "REQUEST_SOURCE: \($event_name)",
+              "THREAD_ID: \(.comment.node_id)",
+              "COMMENT_ID: \(.comment.id)",
+              "AUTHOR: \(.comment.user.login)",
+              "BODY: \(.comment.body)",
+              "URL: \(.comment.html_url)",
+              "IS_PR: \((.issue.pull_request != null) or ($event_name == "pull_request_review_comment"))",
+              "ISSUE_OR_PR_NUMBER: \((.issue.number // .pull_request.number) // "")"
+            ]
+            + (if .comment.pull_request_review_id then ["REVIEW_ID: \(.comment.pull_request_review_id)"] else [] end)
+            + (if .comment.in_reply_to_id then ["REPLY_TO_COMMENT_ID: \(.comment.in_reply_to_id)"] else [] end)
+            | join("\n")
+          ' "$GITHUB_EVENT_PATH")"
+
+          delimiter="QODER_ARGS_$(uuidgen)"
+          {
+            echo "args<<$delimiter"
+            echo "$ARGS"
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Run Qoder Assistant
         uses: QoderAI/qoder-action@v0
