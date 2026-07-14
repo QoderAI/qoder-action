@@ -7,6 +7,7 @@ Turn your GitHub repository into an intelligent workspace with **Qoder**. This a
 - **🤖 Intelligent Code Reviews**: Automatically analyze Pull Requests for bugs, security vulnerabilities, and code style issues before they merge.
 - **💬 Interactive Development**: Collaborate with `@qoder` directly in Issues and Pull Requests to explain code, refactor logic, or generate tests via chat.
 - **🧠 Context-Aware**: Inject project-specific knowledge (architecture, conventions) simply by adding an `Agents.md` file to your repository.
+- **🐙 Official GitHub Tools**: Uses GitHub's official MCP Server for repository, Issue, and Pull Request operations.
 - **🧩 Highly Extensible**: Define custom **Subagents** and **Slash Commands** to create tailored workflows that match your team's unique processes.
 - **⚡ Pipeline Ready**: Built for CI/CD with structured stream-json outputs, enabling seamless integration with other tools and scripts.
 
@@ -47,6 +48,8 @@ Browse the [`examples/`](./examples/) directory to choose a workflow that fits y
 - **Code Review**: Open a new Pull Request and wait for Qoder's feedback.
 - **Assistant**: Comment `@qoder Explain this code` or `@qoder Fix this bug` on any Issue or PR.
 
+The Assistant workflow covers Issue and PR conversation comments through `issue_comment`, plus PR inline review comments through `pull_request_review_comment`. The example does not inspect the initial Issue or PR body; supporting that surface requires both additional `issues` or `pull_request` events and separate title/body trigger detection.
+
 ## Configuration Reference
 
 ### Inputs
@@ -54,10 +57,12 @@ Browse the [`examples/`](./examples/) directory to choose a workflow that fits y
 | Name | Description | Required | Default |
 |------|-------------|----------|---------|
 | `prompt` | Instructions for `qodercli` (passed to `-p` flag). | **Yes** | - |
+| `trigger_phrase` | For Issue and PR comment events, require this exact phrase before running qodercli. | No | `''` (disabled) |
 | `qoder_personal_access_token` | Your Qoder Personal Access Token. | **Yes** | - |
 | `flags` | Additional CLI arguments for `qodercli`. | No | `''` |
-| `qodercli_version` | Version of `qodercli`. Default version recommended. | No | (Latest Compatible) |
-| `enable_qoder_github_mcp` | Enable qoder-github MCP Server. Required for built-in resources. | No | `true` |
+| `qodercli_version` | Version of `qodercli`. Default version recommended. | No | `0.1.18` |
+| `enable_github_mcp` | Enable GitHub's official MCP Server. | No | `true` (effective) |
+| `enable_qoder_github_mcp` | Deprecated alias for `enable_github_mcp`; removed in `v1`. | No | - |
 
 
 ### Secrets
@@ -72,12 +77,35 @@ This action provides outputs that can be consumed by subsequent steps in your wo
 
 | Name | Description |
 |------|-------------|
+| `triggered` | Whether the event passed trigger phrase detection. |
 | `output_file` | Path to a file containing the full `stdout` from `qodercli`. The content is formatted as **stream-json** (line-delimited JSON objects), making it machine-readable for custom post-processing scripts. |
 | `error` | Captures the standard error (stderr) output if the execution encounters issues. |
 
 ### Authentication
 
 This action uses OpenID Connect (OIDC) to securely authenticate with Qoder services. Ensure your workflow has the `id-token: write` permission.
+
+### Official GitHub MCP Server
+
+The GitHub MCP integration runs the official [`github/github-mcp-server`](https://github.com/github/github-mcp-server) container under the server name `github`. Its tools therefore use the `mcp__github__*` namespace. The default image is release `v1.5.0`, pinned to its immutable multi-platform manifest digest rather than a floating tag.
+
+The launcher includes a narrow stdio compatibility layer for Qoder CLI versions that materialize optional JSON Schema properties with placeholder values. It keeps the official server as the GitHub implementation while normalizing only mutually exclusive comment fields, pending-review creation fields, and invalid review-comment range defaults before forwarding `tools/call`. Reaction-only requests and final review submission fields pass through unchanged.
+
+The enabled GitHub MCP integration requires a Linux runner with the standard `flock` utility so executions sharing a home can coordinate Qoder configuration access, plus a working Docker daemon. If either dependency or the pinned image is unavailable while MCP is enabled, the action fails immediately. Set `enable_github_mcp: false` when the workflow does not need GitHub MCP tools. A disabled run without `flock` executes qodercli directly and leaves MCP configuration untouched; when `flock` is available, disabled runs still serialize with enabled runs and remove the legacy `qoder_github` entry safely.
+
+When neither `GITHUB_TOOLSETS` nor `GITHUB_TOOLS` is configured, the launcher explicitly limits the official server to the writable `context`, `repos`, `issues`, `pull_requests`, and `users` toolsets. This avoids inheriting additional toolsets that a future server release may add to its own defaults. Setting only `GITHUB_TOOLS` preserves the official server's tools-only selection semantics. GitHub App token permissions remain the authorization boundary. Advanced workflows can set these environment variables on the action step:
+
+| Environment variable | Purpose |
+|---|---|
+| `GITHUB_TOOLSETS` | Select official MCP toolsets. |
+| `GITHUB_TOOLS` | Select individual official MCP tools; when set alone, no default toolsets are added. |
+| `GITHUB_READ_ONLY` | Set to `1` to disable mutating tools. |
+| `GITHUB_LOCKDOWN_MODE` | Set to `1` to restrict untrusted public-repository content. |
+| `GITHUB_MCP_SERVER_IMAGE` | Override the pinned container image, for example with a trusted internal mirror. |
+
+The short-lived GitHub App installation token is carried in an action-private environment variable and bridged to `GITHUB_PERSONAL_ACCESS_TOKEN` only inside the official server launcher; it is never written to `~/.qoder.json`. A disabled run does not overwrite a caller-provided `GITHUB_PERSONAL_ACCESS_TOKEN`, so preserved user MCP servers can continue using it. The action keeps the caller's real `HOME` so Docker credentials and unrelated user MCP servers retain their normal paths. While GitHub MCP is enabled, an OS-level lock serializes the setup → qodercli → restore lifecycle for jobs sharing that home, verifies that the lock pathname still identifies the opened lock inode, and lets every lifecycle child that can touch the configuration retain the lock lease if its parent shell is terminated. A permission-restricted journal in `HOME` lets the next run restore the previous user `github` entry after an interrupted cleanup. Recovery only proceeds while the current entry still matches the action's temporary value and `~/.qoder.json` still resolves to the target recorded in the journal; if either changed independently, the action preserves both the current configuration and journal and reports a conflict. Atomic configuration writes follow an existing `~/.qoder.json` symlink and preserve the link itself. The legacy `qoder_github` entry is removed permanently. `GITHUB_HOST` is forwarded automatically for GitHub Enterprise Server and `ghe.com` support.
+
+For compatibility throughout the `v0` series, `enable_qoder_github_mcp` remains available as a deprecated alias. When both enable inputs are set, `enable_github_mcp` takes precedence. In GitHub Actions, the deprecated setup script propagates a legacy `GITHUB_TOKEN` through the runner-managed `GITHUB_ENV` mechanism, then the runtime launcher bridges it to the official server's `GITHUB_PERSONAL_ACCESS_TOKEN`; neither variable is written to the Qoder configuration. Standalone setup scripts refuse to replace an existing `github` MCP entry; only the locked action lifecycle may install a temporary replacement backed by its recovery journal. Explicit prompt references to the old `mcp__qoder_github__*` namespace must migrate to `mcp__github__*`.
 
 ## Customization
 

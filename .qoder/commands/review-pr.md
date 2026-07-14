@@ -16,7 +16,7 @@ Context Info: $ARGUMENTS
 - Available Tools:
   * Bash (read-only commands like cat/grep/find/git show)
   * Read, Grep, Glob (code search and analysis)
-  * MCP: `mcp__qoder_github__*` (fetch PR, diff, submit comments)
+  * MCP: `mcp__github__pull_request_read`, `mcp__github__pull_request_review_write`, and `mcp__github__add_comment_to_pending_review`
   * TodoWrite (task planning and progress tracking)
 - Permission Boundaries:
   * Read-only access; all write operations must go through MCP GitHub tools
@@ -32,7 +32,7 @@ Context Info: $ARGUMENTS
 5. **Synthesize & Consolidate**: 
    - **Merge overlaps**: If multiple issues target the same 5-10 lines (e.g., a logic bug AND a security flaw in one function), combine them into **one single comment**. Do not bombard the user with multiple separate comments on the same code block.
    - **Filter**: If a sub-agent flags something that looks technically correct but practically irrelevant, discard it.
-6. **Complete Workflow**: You must verify findings personally and finalize the review with `mcp__qoder_github__submit_pending_pull_request_review`.
+6. **Complete Workflow**: You must verify findings personally and finalize the review with `mcp__github__pull_request_review_write` using method `submit_pending`.
 
 ## Sub-Agents
 - `code-analyzer`: Provides deep static analysis insights.
@@ -41,20 +41,21 @@ Context Info: $ARGUMENTS
 ## Workflow
 1. **Plan (TodoWrite)**: Create a plan to understand the PR, invoke agents, verify findings, and write the review.
 2. **Gather Intelligence**:
-   - Call `get_pull_request` / `get_pull_request_diff`.
+   - Call `mcp__github__pull_request_read` with methods `get` and `get_diff`.
    - Invoke `code-analyzer` and `test-analyzer` with Context Info.
 3. **Deep Dive & Verification (Crucial)**:
    - **Read the code personally**. Don't blindly trust sub-agents.
    - Use Grep/Read to trace function calls and understand the broader impact.
    - Form your own opinion on the implementation strategy.
 4. **Drafting the Review**:
-   - **Inline Comments**: Call `mcp__qoder_github__add_comment_to_pending_review` for specific, actionable code issues.
+   - **Pending Review**: Call `mcp__github__pull_request_review_write` with method `create` before adding inline comments. The `create` call must contain only `method`, `owner`, `repo`, and `pullNumber`; omit `event`, `body`, and `commitID`. Supplying `event` makes the official server submit the review immediately instead of creating a pending review. If GitHub reports that the requester already has a pending review, reuse the existing pending review and continue; do not issue a second create or delete the draft. Stop on any other create error.
+   - **Inline Comments**: Call `mcp__github__add_comment_to_pending_review` for specific, actionable code issues.
      - **Defects Only**: Only post inline comments for **logic bugs, security risks, or severe performance issues**.
      - **No Test Nags**: Do NOT post inline comments just to say "Add tests here". Test coverage gaps belong in the `Verification Advice` section of the main Summary.
      - **Quote Context**: Always reference specific variable names, function calls, or logic snippets in your text.
      - **No Markdown Headers**: Use plain text paragraphs only.
      - **One Comment Per Block**: Combine all observations for a block into one cohesive narrative.
-   - **The Summary**: This is where you speak to the author. Call `mcp__qoder_github__submit_pending_pull_request_review`.
+   - **The Summary**: This is where you speak to the author. Call `mcp__github__pull_request_review_write` with method `submit_pending`, event `COMMENT`, and the summary as `body`. This is the only review call that may include `event` or the final summary body.
    
    **Summary Template**:
    ```

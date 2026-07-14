@@ -10,6 +10,11 @@ inputs:
   prompt:
     description: 'Instructions for qodercli (passed to -p flag)'
     required: true
+
+  trigger_phrase:
+    description: 'For Issue and PR comment events, require this exact trigger phrase before running qodercli. Leave empty to disable trigger detection.'
+    required: false
+    default: ''
   
   flags:
     description: |
@@ -27,12 +32,21 @@ inputs:
     required: false
     default: '0.1.18'
 
-  enable_qoder_github_mcp:
-    description: 'Enable the qoder-github MCP Server for enhanced GitHub operations. This is required for built-in resources and advanced tool capabilities.'
+  enable_github_mcp:
+    description: 'Enable the official GitHub MCP Server. Defaults to true when neither this input nor the deprecated alias is set.'
     required: false
-    default: 'true'
+    default: ''
+
+  enable_qoder_github_mcp:
+    description: 'Deprecated alias for enable_github_mcp. It will be removed in v1.'
+    required: false
+    default: ''
 
 outputs:
+  triggered:
+    description: 'Whether the event passed trigger phrase detection.'
+    value: ${{ steps.detect_trigger.outputs.triggered }}
+
   output_file:
     description: 'Path to the file containing qodercli stdout output (formatted as stream-json).'
     value: ${{ steps.run_cli.outputs.output_file }}
@@ -44,7 +58,18 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    - name: Detect comment trigger
+      id: detect_trigger
+      shell: bash
+      env:
+        INPUT_TRIGGER_PHRASE: ${{ inputs.trigger_phrase }}
+        GITHUB_EVENT_NAME: ${{ github.event_name }}
+        GITHUB_EVENT_PATH: ${{ github.event_path }}
+      run: |
+        node "${GITHUB_ACTION_PATH}/scripts/detect-trigger.js"
+
     - name: Install qodercli
+      if: steps.detect_trigger.outputs.triggered == 'true'
       shell: bash
       env:
         QODERCLI_VERSION: ${{ inputs.qodercli_version }}
@@ -58,27 +83,34 @@ runs:
 
     - name: Configure Git Authentication
       id: auth
+      if: steps.detect_trigger.outputs.triggered == 'true'
       shell: bash
       env:
         QODER_PERSONAL_ACCESS_TOKEN: ${{ inputs.qoder_personal_access_token }}
       run: |
         bash "${GITHUB_ACTION_PATH}/scripts/configure-qoder-auth.sh"
 
-    - name: Setup qoder-github MCP Server
-      if: inputs.enable_qoder_github_mcp == 'true'
+    - name: Resolve GitHub MCP configuration
+      id: resolve_github_mcp
+      if: steps.detect_trigger.outputs.triggered == 'true'
       shell: bash
       env:
-        GITHUB_TOKEN: ${{ steps.auth.outputs.github_token }}
+        INPUT_ENABLE_GITHUB_MCP: ${{ inputs.enable_github_mcp }}
+        INPUT_ENABLE_QODER_GITHUB_MCP: ${{ inputs.enable_qoder_github_mcp }}
       run: |
-        bash "${GITHUB_ACTION_PATH}/scripts/setup-qoder-github-mcp.sh"
+        bash "${GITHUB_ACTION_PATH}/scripts/resolve-github-mcp-enabled.sh"
 
-    - name: Run qodercli
+    - name: Run qodercli with optional official GitHub MCP Server
       id: run_cli
+      if: steps.detect_trigger.outputs.triggered == 'true'
       shell: bash
       env:
+        ENABLE_GITHUB_MCP: ${{ steps.resolve_github_mcp.outputs.enabled }}
         QODER_PERSONAL_ACCESS_TOKEN: ${{ inputs.qoder_personal_access_token }}
         GITHUB_TOKEN: ${{ steps.auth.outputs.github_token }}
+        QODER_ACTION_GITHUB_MCP_TOKEN: ${{ steps.resolve_github_mcp.outputs.enabled == 'true' && steps.auth.outputs.github_token || '' }}
+        GITHUB_HOST: ${{ github.server_url }}
         INPUT_PROMPT: ${{ inputs.prompt }}
         INPUT_FLAGS: ${{ inputs.flags }}
       run: |
-        bash "${GITHUB_ACTION_PATH}/scripts/run-qodercli.sh"
+        bash "${GITHUB_ACTION_PATH}/scripts/run-qodercli-with-github-mcp.sh"

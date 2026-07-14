@@ -2,6 +2,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const readline = require('readline');
 const path = require('path');
+const { maskSensitiveData } = require('./redact-sensitive-data');
 
 // ANSI colors
 const COLORS = {
@@ -18,26 +19,6 @@ function printGroupStart(title) {
 
 function printGroupEnd() {
   process.stdout.write(`::endgroup::\n`);
-}
-
-function maskSensitiveData(obj) {
-  if (!obj || typeof obj !== 'object') return obj;
-  
-  const sensitiveKeys = ['token', 'password', 'secret', 'key', 'authorization', 'auth', 'credential', 'private', 'cert', 'access_key'];
-  const maskedObj = Array.isArray(obj) ? [...obj] : { ...obj };
-
-  for (const key in maskedObj) {
-    if (Object.prototype.hasOwnProperty.call(maskedObj, key)) {
-      const lowerKey = key.toLowerCase();
-      // Check if key contains sensitive words
-      if (sensitiveKeys.some(s => lowerKey.includes(s))) {
-        maskedObj[key] = '******';
-      } else if (typeof maskedObj[key] === 'object') {
-        maskedObj[key] = maskSensitiveData(maskedObj[key]);
-      }
-    }
-  }
-  return maskedObj;
 }
 
 // --- 1. Environment & Arguments Preparation ---
@@ -104,8 +85,22 @@ printGroupEnd();
 
 // --- 2. Execution & Stream Processing ---
 
+const qoderStdio = ['inherit', 'pipe', 'pipe'];
+const lockFdInput = process.env.QODER_ACTION_LOCK_FD;
+if (lockFdInput) {
+  const lockFd = Number(lockFdInput);
+  if (!Number.isSafeInteger(lockFd) || lockFd < 3 || lockFd > 1024) {
+    console.error(`Invalid QODER_ACTION_LOCK_FD: ${lockFdInput}`);
+    process.exit(1);
+  }
+  while (qoderStdio.length < lockFd) {
+    qoderStdio.push('ignore');
+  }
+  qoderStdio.push(lockFd);
+}
+
 const child = spawn('qodercli', args, {
-  stdio: ['inherit', 'pipe', 'pipe'], // Capture stdout and stderr
+  stdio: qoderStdio, // Capture output while forwarding the optional lock lease.
   shell: false,
   env: process.env
 });
@@ -121,6 +116,22 @@ const processedToolIds = new Set();
 let sessionIdPrinted = false;
 let capturedSessionId = null;
 
+function isToolResultError(part) {
+  if (!part || (part.type !== 'tool_result' && part.type !== 'function_result')) {
+    return false;
+  }
+
+  if (part.is_error === true || part.isError === true) {
+    return true;
+  }
+
+  return typeof part.content === 'string' && /^\s*Error(?:\s|:)/i.test(part.content);
+}
+
+function isActionsDebugEnabled() {
+  return process.env.ACTIONS_STEP_DEBUG === 'true' || process.env.RUNNER_DEBUG === '1';
+}
+
 rlOut.on('line', (line) => {
   outputStream.write(line + '\n');
 
@@ -135,6 +146,19 @@ rlOut.on('line', (line) => {
         process.stdout.write(`${COLORS.BOLD}Session ID:${COLORS.RESET} ${data.session_id}\n`);
         sessionIdPrinted = true;
       }
+    }
+
+    if (isActionsDebugEnabled()
+      && data.message
+      && Array.isArray(data.message.content)) {
+      data.message.content.forEach(part => {
+        if (!isToolResultError(part)) return;
+
+        const maskedResult = maskSensitiveData(part);
+        printGroupStart(`${COLORS.CYAN}[Tool Result Error]${COLORS.RESET}`);
+        process.stdout.write(`${JSON.stringify(maskedResult, null, 2)}\n`);
+        printGroupEnd();
+      });
     }
     
     // Stream Content
@@ -172,7 +196,7 @@ rlOut.on('line', (line) => {
             const argsSummary = displayStr.replace(/\s+/g, ' ').substring(0, 50) + (displayStr.length > 50 ? '...' : '');
             printGroupStart(`${COLORS.CYAN}[Tool Call]${COLORS.RESET} ${part.name} ${argsSummary}`);
             
-            if (process.env.ACTIONS_STEP_DEBUG === 'true') {
+            if (isActionsDebugEnabled()) {
                 process.stdout.write(displayStr + '\n');
             } else {
                 process.stdout.write('(Detailed arguments hidden. Enable Actions Debug logging to view)\n');

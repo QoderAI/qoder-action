@@ -142,12 +142,12 @@ name: Chinese Assistant
 on:
   issue_comment:
     types: [created]
+  pull_request_review_comment:
+    types: [created]
 
 jobs:
   qoder-assistant:
-    if: |
-      contains(github.event.comment.body, '@qoder') && 
-      !endsWith(github.event.comment.user.login, '[bot]')
+    if: "!endsWith(github.event.comment.user.login, '[bot]')"
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -159,6 +159,7 @@ jobs:
       - uses: QoderAI/qoder-action@v0
         with:
           qoder_personal_access_token: ${{ secrets.QODER_PERSONAL_ACCESS_TOKEN }}
+          trigger_phrase: '@qoder'
           prompt: |
             /assistant
             ... (other args) ...
