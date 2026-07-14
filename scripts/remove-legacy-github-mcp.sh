@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/github-mcp-common.sh"
 
 CONFIG_FILE="${HOME}/.qoder.json"
+CONFIG_WRITE_TARGET="$(qoder_config_write_target "${CONFIG_FILE}")"
 if [[ ! -f "${CONFIG_FILE}" ]]; then
   exit 0
 fi
@@ -27,7 +28,6 @@ if ! jq -e '(.mcpServers // {}) | has("qoder_github")' \
   exit 0
 fi
 
-CONFIG_WRITE_TARGET="$(qoder_config_write_target "${CONFIG_FILE}")"
 TMP_CONFIG="$(qoder_config_temp_file "${CONFIG_WRITE_TARGET}")"
 trap 'rm -f "${TMP_CONFIG}"' EXIT
 

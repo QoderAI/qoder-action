@@ -257,6 +257,31 @@ JSON
   rm -rf "${test_dir}"
 }
 
+test_setup_rejects_non_regular_config() {
+  local test_dir
+  local log_file
+
+  create_mcp_fixture test_dir
+  mkdir "${test_dir}/home/.qoder.json"
+  log_file="${test_dir}/non-regular-config.log"
+
+  if run_official_setup "${test_dir}" > "${log_file}" 2>&1; then
+    fail "setup should reject a non-regular Qoder configuration path"
+  fi
+
+  if [[ ! -d "${test_dir}/home/.qoder.json" ]]; then
+    fail "setup should preserve the non-regular Qoder configuration path"
+  fi
+  if ! grep -q "::error::.*regular file" "${log_file}"; then
+    fail "setup should explain the non-regular Qoder configuration path"
+  fi
+  if [[ -s "${test_dir}/docker.log" ]]; then
+    fail "setup should reject a non-regular Qoder configuration before using Docker"
+  fi
+
+  rm -rf "${test_dir}"
+}
+
 test_docker_pull_failure_is_atomic() {
   local test_dir
   local after
@@ -1100,6 +1125,7 @@ run_test "GitHub MCP defaults to enabled" test_mcp_defaults_to_enabled
 run_test "canonical input wins conflicts" test_new_input_overrides_legacy_input
 run_test "invalid enable input fails" test_invalid_input_fails
 run_test "setup replaces legacy server with official server" test_setup_replaces_legacy_with_official_server
+run_test "setup rejects a non-regular Qoder configuration" test_setup_rejects_non_regular_config
 run_test "Docker pull failure only leaves permanent legacy migration" test_docker_pull_failure_is_atomic
 run_test "legacy setup script delegates to official setup" test_legacy_script_delegates_to_official_setup
 run_test "legacy setup preserves an existing GitHub MCP server" test_legacy_setup_preserves_existing_github

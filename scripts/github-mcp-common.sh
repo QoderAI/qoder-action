@@ -43,6 +43,10 @@ qoder_config_write_target() {
     depth=$((depth + 1))
   done
 
+  if [[ -e "${path}" && ! -f "${path}" ]]; then
+    echo "::error::Qoder configuration must be a regular file or a symlink to one: $1" >&2
+    return 1
+  fi
   if ! parent_dir="$(cd -P "$(dirname "${path}")" && pwd)"; then
     echo "::error::Qoder configuration target directory does not exist: $(dirname "${path}")" >&2
     return 1

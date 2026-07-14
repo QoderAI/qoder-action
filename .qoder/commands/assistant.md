@@ -112,8 +112,9 @@ Classify the request to determine the engagement strategy:
      
      * **Step-by-Step**:
        1. **Branch**: `mcp__github__create_branch` (Select Base based on Protocol A/B).
-       2. **Commit Changes**: Call `mcp__github__push_files` once with all modified files so the task produces one remote commit.
-       3. **PR**: `mcp__github__create_pull_request` with `draft: true`.
+       2. **Commit Additions/Updates**: If the task only creates or updates files, call `mcp__github__push_files` once with all changed files. For mixed changes, include every addition and update in one `push_files` call.
+       3. **Commit Deletions/Renames**: Use `mcp__github__delete_file` once for each deleted path. For a rename, push the new path before deleting the old path. The official server creates a separate commit for each deletion, so deletion and rename tasks may require multiple commits. Never represent a deletion as an empty file.
+       4. **PR**: `mcp__github__create_pull_request` with `draft: true`.
 
    - Do not publish progress updates. Preserve all user-visible detail for the final response.
 

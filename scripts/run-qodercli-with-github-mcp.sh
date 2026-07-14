@@ -83,6 +83,9 @@ echo "Waiting for exclusive access to ${HOME}/.qoder.json..."
 flock 9
 echo "✓ Exclusive Qoder configuration lock acquired"
 
+CONFIG_FILE="${HOME}/.qoder.json"
+qoder_config_write_target "${CONFIG_FILE}" >/dev/null
+
 if [[ -L "${BACKUP_FILE}" ]]; then
   echo "::error::Refusing to use a symlink as the GitHub MCP backup journal: ${BACKUP_FILE}" >&2
   exit 1
@@ -105,7 +108,6 @@ if [[ "${ENABLE_GITHUB_MCP}" == "false" ]]; then
   exit 0
 fi
 
-CONFIG_FILE="${HOME}/.qoder.json"
 TEMPORARY_GITHUB_ENTRY="$(
   github_mcp_server_entry \
     "${SCRIPT_DIR}/run-github-mcp-server.sh" \

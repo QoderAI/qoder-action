@@ -32,6 +32,7 @@ if ! jq -e '
 fi
 
 CONFIG_FILE="${HOME}/.qoder.json"
+CONFIG_WRITE_TARGET="$(qoder_config_write_target "${CONFIG_FILE}")"
 if [[ ! -f "${CONFIG_FILE}" ]]; then
   if jq -e '.had_config' "${GITHUB_MCP_BACKUP_FILE}" >/dev/null; then
     echo "::error::Cannot restore GitHub MCP because ${CONFIG_FILE} was removed during the run. Backup retained at ${GITHUB_MCP_BACKUP_FILE}." >&2
@@ -79,7 +80,6 @@ case "${CURRENT_STATE}" in
     ;;
 esac
 
-CONFIG_WRITE_TARGET="$(qoder_config_write_target "${CONFIG_FILE}")"
 TMP_CONFIG="$(qoder_config_temp_file "${CONFIG_WRITE_TARGET}")"
 trap 'rm -f "${TMP_CONFIG}"' EXIT
 

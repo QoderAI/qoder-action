@@ -21,6 +21,7 @@ if [[ "${QODER_ACTION_ALLOW_GITHUB_MCP_REPLACE:-false}" != "true" \
   echo "::error::A GitHub MCP server is already configured at ${CONFIG_FILE}; refusing to replace it outside the locked action lifecycle." >&2
   exit 1
 fi
+CONFIG_WRITE_TARGET="$(qoder_config_write_target "${CONFIG_FILE}")"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "::error::Docker is required to run the official GitHub MCP Server." >&2
@@ -43,7 +44,6 @@ if ! docker pull "${IMAGE}"; then
 fi
 echo "::endgroup::"
 
-CONFIG_WRITE_TARGET="$(qoder_config_write_target "${CONFIG_FILE}")"
 TMP_CONFIG="$(qoder_config_temp_file "${CONFIG_WRITE_TARGET}")"
 trap 'rm -f "${TMP_CONFIG}"' EXIT
 

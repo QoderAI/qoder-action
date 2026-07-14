@@ -20,11 +20,15 @@ assistant = RESOURCE_CONTENT.fetch(File.join(ROOT, ".qoder", "commands", "assist
   mcp__github__add_reply_to_pull_request_comment
   mcp__github__create_branch
   mcp__github__push_files
+  mcp__github__delete_file
   mcp__github__create_pull_request
 ].each do |tool|
   fail_test("assistant command does not reference #{tool}") unless assistant.include?(tool)
 end
 fail_test("assistant command mixes single-file and batch commit tools") if assistant.include?("mcp__github__create_or_update_file")
+unless assistant.include?("Never represent a deletion as an empty file")
+  fail_test("assistant command does not preserve delete semantics")
+end
 
 review = RESOURCE_CONTENT.fetch(File.join(ROOT, ".qoder", "commands", "review-pr.md"))
 %w[
@@ -33,6 +37,9 @@ review = RESOURCE_CONTENT.fetch(File.join(ROOT, ".qoder", "commands", "review-pr
   mcp__github__add_comment_to_pending_review
 ].each do |tool|
   fail_test("review command does not reference #{tool}") unless review.include?(tool)
+end
+unless review.include?("reuse the existing pending review")
+  fail_test("review command does not recover an existing pending review")
 end
 
 %w[code-analyzer.md test-analyzer.md].each do |agent_name|

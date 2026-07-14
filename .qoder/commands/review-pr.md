@@ -48,7 +48,7 @@ Context Info: $ARGUMENTS
    - Use Grep/Read to trace function calls and understand the broader impact.
    - Form your own opinion on the implementation strategy.
 4. **Drafting the Review**:
-   - **Pending Review**: Call `mcp__github__pull_request_review_write` with method `create` before adding inline comments.
+   - **Pending Review**: Call `mcp__github__pull_request_review_write` with method `create` before adding inline comments. If GitHub reports that the requester already has a pending review, reuse the existing pending review and continue; do not issue a second create or delete the draft. Stop on any other create error.
    - **Inline Comments**: Call `mcp__github__add_comment_to_pending_review` for specific, actionable code issues.
      - **Defects Only**: Only post inline comments for **logic bugs, security risks, or severe performance issues**.
      - **No Test Nags**: Do NOT post inline comments just to say "Add tests here". Test coverage gaps belong in the `Verification Advice` section of the main Summary.
