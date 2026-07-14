@@ -98,6 +98,8 @@ test('does not gate non-comment automation events', () => {
 test('requires @qoder to be a complete phrase', () => {
   const rejectedBodies = [
     'please ask @qoderai instead',
+    'please ask @qoder-helper instead',
+    'please ask @qoder[bot] instead',
     'email@qoder.com',
     'ordinary comment without a command',
   ];
@@ -122,4 +124,20 @@ test('matches the configured phrase case-insensitively with punctuation', () => 
   });
 
   assert.equal(output.triggered, 'true');
+});
+
+test('accepts punctuation on both sides of @qoder', () => {
+  const acceptedBodies = [
+    'please,@qoder help',
+    '（@qoder）',
+    '你好，@qoder。',
+  ];
+
+  for (const body of acceptedBodies) {
+    const output = runTrigger({
+      eventName: 'issue_comment',
+      payload: { issue: { number: 7 }, comment: { body } },
+    });
+    assert.equal(output.triggered, 'true', body);
+  }
 });

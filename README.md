@@ -48,7 +48,7 @@ Browse the [`examples/`](./examples/) directory to choose a workflow that fits y
 - **Code Review**: Open a new Pull Request and wait for Qoder's feedback.
 - **Assistant**: Comment `@qoder Explain this code` or `@qoder Fix this bug` on any Issue or PR.
 
-The Assistant workflow covers Issue and PR conversation comments through `issue_comment`, plus PR inline review comments through `pull_request_review_comment`. Mentions in the initial Issue or PR body require separate `issues` or `pull_request` triggers and are not enabled by the example workflow.
+The Assistant workflow covers Issue and PR conversation comments through `issue_comment`, plus PR inline review comments through `pull_request_review_comment`. The example does not inspect the initial Issue or PR body; supporting that surface requires both additional `issues` or `pull_request` events and separate title/body trigger detection.
 
 ## Configuration Reference
 
@@ -77,6 +77,7 @@ This action provides outputs that can be consumed by subsequent steps in your wo
 
 | Name | Description |
 |------|-------------|
+| `triggered` | Whether the event passed trigger phrase detection. |
 | `output_file` | Path to a file containing the full `stdout` from `qodercli`. The content is formatted as **stream-json** (line-delimited JSON objects), making it machine-readable for custom post-processing scripts. |
 | `error` | Captures the standard error (stderr) output if the execution encounters issues. |
 

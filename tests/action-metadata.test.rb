@@ -17,6 +17,13 @@ assert_equal("", inputs.fetch("trigger_phrase").fetch("default"), "trigger detec
 assert_equal("", inputs.fetch("enable_github_mcp").fetch("default"), "canonical input default")
 assert_equal("", inputs.fetch("enable_qoder_github_mcp").fetch("default"), "legacy input default")
 
+outputs = ACTION.fetch("outputs")
+assert_equal(
+  "${{ steps.detect_trigger.outputs.triggered }}",
+  outputs.fetch("triggered").fetch("value"),
+  "trigger result output"
+)
+
 steps = ACTION.fetch("runs").fetch("steps")
 detect_trigger = steps.find { |step| step["id"] == "detect_trigger" }
 migrate_legacy = steps.find { |step| step["id"] == "remove_legacy_github_mcp" }

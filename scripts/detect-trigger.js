@@ -12,8 +12,8 @@ function containsTrigger(body, triggerPhrase) {
   }
 
   const pattern = new RegExp(
-    `(^|\\s)${escapeRegExp(triggerPhrase)}([\\s.,!?;:]|$)`,
-    'i',
+    `(^|[^\\p{L}\\p{N}\\p{M}_])${escapeRegExp(triggerPhrase)}(?![\\p{L}\\p{N}\\p{M}_-]|\\[)`,
+    'iu',
   );
   return pattern.test(body);
 }

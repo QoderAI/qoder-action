@@ -39,4 +39,9 @@ unless readme.include?("Issue and PR conversation comments") &&
   fail_test("README does not document Assistant coverage across Issue and PR comment surfaces")
 end
 
+recipe = PUBLIC_GUIDANCE.fetch("docs/recipes.md")
+unless recipe.include?("pull_request_review_comment:")
+  fail_test("Chinese Assistant recipe does not subscribe to PR inline review comments")
+end
+
 puts "ok - Assistant delegates the @qoder trigger to the action for Issue and PR comments"
