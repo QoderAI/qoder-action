@@ -9,11 +9,23 @@ function deleteKeys(object, keys) {
   }
 }
 
-function normalizeToolArguments(name, args) {
+function resolveCompatibilityProfile(env = process.env) {
+  const explicitProfile = env.QODER_ACTION_GITHUB_MCP_COMPAT_PROFILE || '';
+  if (explicitProfile === 'assistant' || explicitProfile === 'review-pr') {
+    return explicitProfile;
+  }
+
+  const prompt = typeof env.INPUT_PROMPT === 'string' ? env.INPUT_PROMPT.trimStart() : '';
+  const command = prompt.match(/^\/(assistant|review-pr)(?:\s|$)/);
+  return command ? command[1] : '';
+}
+
+function normalizeToolArguments(name, args, options = {}) {
   if (!args || typeof args !== 'object' || Array.isArray(args)) {
     return [];
   }
 
+  const compatibilityProfile = options.compatibilityProfile || '';
   const removed = [];
   const remove = (keys) => {
     for (const key of keys) {
@@ -24,31 +36,36 @@ function normalizeToolArguments(name, args) {
     deleteKeys(args, keys);
   };
 
-  if (name === 'add_issue_comment' && typeof args.body === 'string' && args.body.length > 0) {
+  if (compatibilityProfile === 'assistant'
+    && name === 'add_issue_comment'
+    && typeof args.body === 'string'
+    && args.body.length > 0) {
     remove(['comment_id', 'reaction']);
   }
 
-  if (name === 'add_reply_to_pull_request_comment'
+  if (compatibilityProfile === 'assistant'
+    && name === 'add_reply_to_pull_request_comment'
     && typeof args.body === 'string'
     && args.body.length > 0) {
     remove(['reaction']);
   }
 
-  if (name === 'pull_request_review_write' && args.method === 'create') {
+  if (compatibilityProfile === 'review-pr'
+    && name === 'pull_request_review_write'
+    && args.method === 'create') {
     remove(['body', 'event', 'commitID', 'threadId']);
   }
 
-  if (name === 'add_comment_to_pending_review') {
-    remove(['startLine', 'startSide']);
-    if (args.subjectType === 'FILE') {
-      remove(['line', 'side']);
-    }
+  if (compatibilityProfile === 'review-pr'
+    && name === 'add_comment_to_pending_review'
+    && args.subjectType === 'FILE') {
+    remove(['line', 'side', 'startLine', 'startSide']);
   }
 
   return removed;
 }
 
-function normalizeMessage(message, onNormalize = () => {}) {
+function normalizeMessage(message, onNormalize = () => {}, options = {}) {
   const messages = Array.isArray(message) ? message : [message];
 
   for (const item of messages) {
@@ -56,7 +73,7 @@ function normalizeMessage(message, onNormalize = () => {}) {
       continue;
     }
 
-    const removed = normalizeToolArguments(item.params.name, item.params.arguments);
+    const removed = normalizeToolArguments(item.params.name, item.params.arguments, options);
     if (removed.length > 0) {
       onNormalize(item.params.name, removed);
     }
@@ -74,6 +91,10 @@ function run() {
     console.error('github-mcp-compat-proxy.js requires a child command after --');
     process.exit(2);
   }
+
+  const normalizationOptions = {
+    compatibilityProfile: resolveCompatibilityProfile(),
+  };
 
   const child = spawn(command, args, {
     env: process.env,
@@ -93,7 +114,7 @@ function run() {
 
     try {
       const message = JSON.parse(line);
-      normalizeMessage(message);
+      normalizeMessage(message, undefined, normalizationOptions);
       output = JSON.stringify(message);
     } catch (_error) {
       // Forward malformed input unchanged so the official server owns protocol errors.
@@ -137,4 +158,5 @@ if (require.main === module) {
 module.exports = {
   normalizeMessage,
   normalizeToolArguments,
+  resolveCompatibilityProfile,
 };

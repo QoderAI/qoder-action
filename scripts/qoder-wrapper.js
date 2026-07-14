@@ -20,7 +20,25 @@ function printGroupEnd() {
   process.stdout.write(`::endgroup::\n`);
 }
 
+function maskSensitiveString(value) {
+  return value
+    .replace(
+      /(\b(?:authorization|x-qoder-personal-access-token)\s*:\s*(?:(?:bearer|basic|token)\s+)?)[^\s,;]+/gi,
+      '$1******',
+    )
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, '******')
+    .replace(
+      /([?&](?:access_token|token|client_secret|signature|sig|x-amz-signature|x-amz-credential)=)[^&#\s]+/gi,
+      '$1******',
+    )
+    .replace(
+      /(\b(?:password|secret|api[_-]?key|access[_-]?token)\s*[:=]\s*)[^\s,;]+/gi,
+      '$1******',
+    );
+}
+
 function maskSensitiveData(obj) {
+  if (typeof obj === 'string') return maskSensitiveString(obj);
   if (!obj || typeof obj !== 'object') return obj;
   
   const sensitiveKeys = ['token', 'password', 'secret', 'key', 'authorization', 'auth', 'credential', 'private', 'cert', 'access_key'];
@@ -32,7 +50,7 @@ function maskSensitiveData(obj) {
       // Check if key contains sensitive words
       if (sensitiveKeys.some(s => lowerKey.includes(s))) {
         maskedObj[key] = '******';
-      } else if (typeof maskedObj[key] === 'object') {
+      } else {
         maskedObj[key] = maskSensitiveData(maskedObj[key]);
       }
     }

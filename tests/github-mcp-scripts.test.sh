@@ -635,7 +635,7 @@ test_qoder_wrapper_prints_tool_errors_in_debug_logs() {
 set -euo pipefail
 
 cat <<'JSONL'
-{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"Error: failed to add reply to pull request comment: Resource not accessible by integration","is_error":true}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"Error: failed to add reply: Authorization: Bearer ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789; https://example.test/callback?token=super-secret-value&status=denied","is_error":true}]}}
 {"type":"user","subtype":"message","message":{"role":"user","content":[{"type":"function_result","function_id":"function-1","content":"Error: legacy function result"}]}}
 JSONL
 EOF
@@ -653,8 +653,17 @@ EOF
   if ! grep -q "Tool Result" "${test_dir}/wrapper.log"; then
     fail "qoder wrapper should identify tool results in debug logs"
   fi
-  if ! grep -q "Resource not accessible by integration" "${test_dir}/wrapper.log"; then
+  if ! grep -q "failed to add reply" "${test_dir}/wrapper.log"; then
     fail "qoder wrapper should print current tool result errors in debug logs"
+  fi
+  if ! grep -q '\*\*\*\*\*\*' "${test_dir}/wrapper.log"; then
+    fail "qoder wrapper should mark redacted secrets in debug logs"
+  fi
+  if grep -q 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789' "${test_dir}/wrapper.log"; then
+    fail "qoder wrapper should redact embedded GitHub tokens from debug logs"
+  fi
+  if grep -q 'token=super-secret-value' "${test_dir}/wrapper.log"; then
+    fail "qoder wrapper should redact secret URL query parameters from debug logs"
   fi
   if ! grep -q "legacy function result" "${test_dir}/wrapper.log"; then
     fail "qoder wrapper should print legacy function result errors in debug logs"
