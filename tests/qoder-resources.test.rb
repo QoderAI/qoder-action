@@ -29,6 +29,12 @@ fail_test("assistant command mixes single-file and batch commit tools") if assis
 unless assistant.include?("Never represent a deletion as an empty file")
   fail_test("assistant command does not preserve delete semantics")
 end
+unless assistant.include?("ISSUE_OR_PR_NUMBER` as `pullNumber")
+  fail_test("assistant command does not map the PR number for review-comment replies")
+end
+if assistant.include?("update the comment")
+  fail_test("assistant command still asks to update an already-published comment")
+end
 
 review = RESOURCE_CONTENT.fetch(File.join(ROOT, ".qoder", "commands", "review-pr.md"))
 %w[

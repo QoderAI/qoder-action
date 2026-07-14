@@ -14,6 +14,7 @@ if [[ -z "${token}" ]]; then
 fi
 
 export GITHUB_PERSONAL_ACCESS_TOKEN="${token}"
+export GITHUB_TOOLSETS="${GITHUB_TOOLSETS:-context,repos,issues,pull_requests,users}"
 
 exec docker run -i --rm \
   -e GITHUB_PERSONAL_ACCESS_TOKEN \

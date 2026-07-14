@@ -21,6 +21,11 @@ case "${ENABLE_GITHUB_MCP}" in
 esac
 
 if ! command -v flock >/dev/null 2>&1; then
+  if [[ "${ENABLE_GITHUB_MCP}" == "false" ]]; then
+    echo "::warning::flock is unavailable; running qodercli without GitHub MCP configuration migration or shared-HOME serialization."
+    bash "${SCRIPT_DIR}/run-qodercli.sh"
+    exit 0
+  fi
   echo "::error::flock is required to serialize qodercli on a shared runner HOME." >&2
   exit 1
 fi
@@ -33,12 +38,18 @@ if [[ "${ENABLE_GITHUB_MCP}" == "true" ]]; then
 fi
 
 LOCK_FILE="${HOME}/.qoder-action-github-mcp.lock"
-if [[ -L "${LOCK_FILE}" ]]; then
-  echo "::error::Refusing to use a symlink as the GitHub MCP lock file: ${LOCK_FILE}" >&2
+if [[ -L "${LOCK_FILE}" || ( -e "${LOCK_FILE}" && ! -f "${LOCK_FILE}" ) ]]; then
+  echo "::error::GitHub MCP lock path must be a regular file and not a symlink: ${LOCK_FILE}" >&2
   exit 1
 fi
 
+umask 077
 exec 9>> "${LOCK_FILE}"
+if [[ -L "${LOCK_FILE}" || ! -f "${LOCK_FILE}" || ! -f /dev/fd/9 ]]; then
+  exec 9>&-
+  echo "::error::GitHub MCP lock path changed while it was opened: ${LOCK_FILE}" >&2
+  exit 1
+fi
 chmod 600 "${LOCK_FILE}"
 
 BACKUP_FILE="${HOME}/.qoder-action-github-mcp-backup.json"
@@ -81,6 +92,10 @@ trap 'exit 143' TERM
 
 echo "Waiting for exclusive access to ${HOME}/.qoder.json..."
 flock 9
+if [[ -L "${LOCK_FILE}" || ! -f "${LOCK_FILE}" ]]; then
+  echo "::error::GitHub MCP lock path changed while waiting for exclusive access: ${LOCK_FILE}" >&2
+  exit 1
+fi
 echo "✓ Exclusive Qoder configuration lock acquired"
 
 CONFIG_FILE="${HOME}/.qoder.json"

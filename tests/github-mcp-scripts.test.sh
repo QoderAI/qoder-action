@@ -36,7 +36,10 @@ create_fake_docker() {
   cat > "${bin_dir}/docker" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf 'token=%s args=%s\n' "${GITHUB_PERSONAL_ACCESS_TOKEN:-missing}" "$*" >> "${FAKE_DOCKER_LOG}"
+printf 'token=%s toolsets=%s args=%s\n' \
+  "${GITHUB_PERSONAL_ACCESS_TOKEN:-missing}" \
+  "${GITHUB_TOOLSETS:-missing}" \
+  "$*" >> "${FAKE_DOCKER_LOG}"
 if [[ "${FAKE_DOCKER_REQUIRE_CONFIG:-false}" == "true" \
   && ! -f "${HOME}/.docker/config.json" ]]; then
   exit 43
@@ -395,7 +398,7 @@ test_legacy_token_is_bridged_at_runtime() {
   assert_equals "legacy-token" "${runtime_token}" "legacy token propagation across steps"
 
   : > "${test_dir}/docker.log"
-  env -u GITHUB_TOKEN \
+  env -u GITHUB_TOKEN -u GITHUB_TOOLSETS \
     PATH="${test_dir}/bin:${PATH}" \
     GITHUB_PERSONAL_ACCESS_TOKEN="${runtime_token}" \
     FAKE_DOCKER_LOG="${test_dir}/docker.log" \
@@ -403,9 +406,9 @@ test_legacy_token_is_bridged_at_runtime() {
 
   runtime_log="$(cat "${test_dir}/docker.log")"
   assert_equals \
-    "token=legacy-token args=run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN -e GITHUB_HOST -e GITHUB_TOOLSETS -e GITHUB_TOOLS -e GITHUB_READ_ONLY -e GITHUB_LOCKDOWN_MODE ghcr.io/github/github-mcp-server:v1.5.0@sha256:e25564dccc9110a70a77b9df560cbde11aa392fcb5f08b9abe5c4ebc6d146ea4" \
+    "token=legacy-token toolsets=context,repos,issues,pull_requests,users args=run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN -e GITHUB_HOST -e GITHUB_TOOLSETS -e GITHUB_TOOLS -e GITHUB_READ_ONLY -e GITHUB_LOCKDOWN_MODE ghcr.io/github/github-mcp-server:v1.5.0@sha256:e25564dccc9110a70a77b9df560cbde11aa392fcb5f08b9abe5c4ebc6d146ea4" \
     "${runtime_log}" \
-    "legacy token runtime bridge"
+    "legacy token runtime bridge and safe default toolsets"
 
   if grep -q "legacy-token" "${test_dir}/home/.qoder.json"; then
     fail "legacy token must not be written to the MCP configuration"
@@ -541,6 +544,74 @@ EOF
   output_file="$(sed -n 's/^output_file=//p' "${test_dir}/github-output")"
   error_file="${output_file/qoder-output-/qoder-error-}"
   rm -f "${output_file}" "${error_file}"
+  rm -rf "${test_dir}"
+}
+
+test_disabled_run_without_flock_stays_compatible() {
+  local test_dir
+
+  create_mcp_fixture test_dir
+  rm -f "${test_dir}/bin/flock"
+  cat > "${test_dir}/bin/node" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -n "${QODER_ACTION_LOCK_FD:-}" ]]; then
+  exit 61
+fi
+touch "${FAKE_NODE_STARTED}"
+EOF
+  chmod +x "${test_dir}/bin/node"
+
+  if ! env \
+    PATH="${test_dir}/bin:/usr/bin:/bin" \
+    HOME="${test_dir}/home" \
+    GITHUB_WORKSPACE="${ROOT_DIR}" \
+    GITHUB_ACTION_PATH="${ROOT_DIR}" \
+    GITHUB_OUTPUT="${test_dir}/github-output" \
+    ENABLE_GITHUB_MCP="false" \
+    FAKE_NODE_STARTED="${test_dir}/started-without-flock" \
+    bash "${ROOT_DIR}/scripts/run-qodercli-with-github-mcp.sh" \
+    > "${test_dir}/run-without-flock.log" 2>&1; then
+    fail "disabled lifecycle should run without flock"
+  fi
+
+  if [[ ! -e "${test_dir}/started-without-flock" ]]; then
+    fail "disabled lifecycle without flock did not run qodercli"
+  fi
+  if [[ -e "${test_dir}/home/.qoder-action-github-mcp.lock" ]]; then
+    fail "disabled lifecycle without flock should not create a lock file"
+  fi
+
+  rm -rf "${test_dir}"
+}
+
+test_lifecycle_rejects_fifo_lock_path() {
+  local test_dir
+  local lifecycle_pid
+
+  create_mcp_fixture test_dir
+  mkfifo "${test_dir}/home/.qoder-action-github-mcp.lock"
+
+  run_locked_lifecycle \
+    "${test_dir}" "fifo-lock" "${test_dir}/unused-started" "${test_dir}/unused-release" \
+    "0" "false" "user-github-server" \
+    > "${test_dir}/fifo-lock.log" 2>&1 &
+  lifecycle_pid=$!
+  sleep 0.5
+
+  if kill -0 "${lifecycle_pid}" 2>/dev/null; then
+    kill "${lifecycle_pid}" 2>/dev/null || true
+    wait "${lifecycle_pid}" 2>/dev/null || true
+    fail "lifecycle should reject a FIFO lock path instead of blocking"
+  fi
+  if wait "${lifecycle_pid}"; then
+    fail "lifecycle should fail for a FIFO lock path"
+  fi
+  if ! grep -q "regular file" "${test_dir}/fifo-lock.log"; then
+    fail "lifecycle should explain the invalid lock path"
+  fi
+
   rm -rf "${test_dir}"
 }
 
@@ -1133,6 +1204,8 @@ run_test "legacy token crosses steps without entering Qoder config" test_legacy_
 run_test "legacy config is removed even without official setup" test_legacy_config_is_removed_without_official_setup
 run_test "lifecycle preserves a symlinked Qoder configuration" test_lifecycle_preserves_symlinked_config
 run_test "qoder wrapper forwards the lock lease" test_qoder_wrapper_forwards_lock_lease
+run_test "disabled runs remain compatible without flock" test_disabled_run_without_flock_stays_compatible
+run_test "lifecycle rejects a FIFO lock path" test_lifecycle_rejects_fifo_lock_path
 run_test "concurrent runs serialize the shared Qoder configuration" test_concurrent_runs_serialize_shared_home
 run_test "disabled runs wait for enabled configuration restore" test_disabled_run_waits_for_enabled_restore
 run_test "disabled runs migrate legacy config before qodercli" test_disabled_run_migrates_legacy_before_qodercli
