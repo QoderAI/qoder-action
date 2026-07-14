@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 if [[ "$#" -ne 1 ]]; then
   echo "::error::run-github-mcp-server.sh requires exactly one container image argument." >&2
   exit 1
@@ -18,7 +20,7 @@ if [[ -z "${GITHUB_TOOLSETS:-}" && -z "${GITHUB_TOOLS:-}" ]]; then
   export GITHUB_TOOLSETS="context,repos,issues,pull_requests,users"
 fi
 
-exec docker run -i --rm \
+exec node "${SCRIPT_DIR}/github-mcp-compat-proxy.js" -- docker run -i --rm \
   -e GITHUB_PERSONAL_ACCESS_TOKEN \
   -e GITHUB_HOST \
   -e GITHUB_TOOLSETS \
