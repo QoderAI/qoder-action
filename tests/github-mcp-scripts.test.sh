@@ -642,7 +642,7 @@ EOF
   chmod +x "${test_dir}/bin/qodercli"
 
   PATH="${test_dir}/bin:${PATH}" \
-    ACTIONS_STEP_DEBUG="true" \
+    RUNNER_DEBUG="1" \
     GITHUB_WORKSPACE="${ROOT_DIR}" \
     GITHUB_OUTPUT="${test_dir}/github-output" \
     INPUT_PROMPT="" \

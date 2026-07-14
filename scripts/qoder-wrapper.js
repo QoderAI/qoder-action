@@ -147,6 +147,10 @@ function isToolResultError(part) {
   return typeof part.content === 'string' && /^\s*Error(?:\s|:)/i.test(part.content);
 }
 
+function isActionsDebugEnabled() {
+  return process.env.ACTIONS_STEP_DEBUG === 'true' || process.env.RUNNER_DEBUG === '1';
+}
+
 rlOut.on('line', (line) => {
   outputStream.write(line + '\n');
 
@@ -163,7 +167,7 @@ rlOut.on('line', (line) => {
       }
     }
 
-    if (process.env.ACTIONS_STEP_DEBUG === 'true'
+    if (isActionsDebugEnabled()
       && data.message
       && Array.isArray(data.message.content)) {
       data.message.content.forEach(part => {
@@ -211,7 +215,7 @@ rlOut.on('line', (line) => {
             const argsSummary = displayStr.replace(/\s+/g, ' ').substring(0, 50) + (displayStr.length > 50 ? '...' : '');
             printGroupStart(`${COLORS.CYAN}[Tool Call]${COLORS.RESET} ${part.name} ${argsSummary}`);
             
-            if (process.env.ACTIONS_STEP_DEBUG === 'true') {
+            if (isActionsDebugEnabled()) {
                 process.stdout.write(displayStr + '\n');
             } else {
                 process.stdout.write('(Detailed arguments hidden. Enable Actions Debug logging to view)\n');
